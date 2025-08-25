@@ -1,0 +1,24 @@
+# Node dependencies
+/node_modules/
+
+# Generated documentation
+/docs/redoc-static.html
+
+# npm log files
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+package-lock.json
+
+# Bundled spec or artifacts (if any)
+openapi/bundled.yaml
+
+# macOS system files
+.DS_Store
+
+# OS/editor temp files
+Thumbs.db
+
+.idea
+.vscode

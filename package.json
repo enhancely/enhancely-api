@@ -1,0 +1,12 @@
+{
+  "name": "enhancely-api-docs",
+  "version": "1.0.0",
+  "description": "Builds static API documentation using ReDoc (Community Edition)",
+  "private": true,
+  "scripts": {
+    "build-docs": "redocly build-docs openapi/openapi_v1.yaml --output docs/index.html"
+  },
+  "devDependencies": {
+    "@redocly/cli": "^2.0.0"
+  }
+}

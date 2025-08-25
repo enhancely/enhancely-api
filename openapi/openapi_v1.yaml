@@ -1,0 +1,293 @@
+openapi: 3.1.0
+jsonSchemaDialect: https://spec.openapis.org/oas/3.1/dialect/base
+info:
+  title: Enhancely API
+  version: "1.0.0"
+servers:
+  - url: https://enhancely.ai
+    description: API V1
+tags:
+  - name: jsonld
+    description: Endpoints dealing with JSON-LD generation and retrieval.
+
+paths:
+  /api/v1/jsonld:
+    get:
+      tags: [ jsonld ]
+      summary: Retrieve the list of JSON-LD URLs
+      operationId: getJsonLdList
+      security:
+        - BearerAuth: []
+      responses:
+        '200':
+          $ref: '#/components/responses/OkJsonLd'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/ServerError'
+    post:
+      tags: [ jsonld ]
+      summary: Create and retrieve JSON-LD for a page
+      description: |
+        Accept a page URL and return JSON-LD.
+        - **201**: new JSON-LD was created (didn't exist before).
+        - **200**: existing JSON-LD returned.
+        - **415** returned if `Content-Type` is not supported.
+      operationId: postJsonLd
+      security:
+        - BearerAuth: [ ]
+      requestBody:
+        $ref: '#/components/requestBodies/JsonLdRequestBody'
+      responses:
+        '201':
+          $ref: '#/components/responses/CreatedJsonLd'
+        '200':
+          $ref: '#/components/responses/OkJsonLd'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '415':
+          $ref: '#/components/responses/UnsupportedMediaType415'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/ServerError'
+  /api/v1/jsonld/{id}:
+    get:
+      tags: [ jsonld ]
+      summary: Retrieve a JSON-LD entry by ID
+      description: |
+        Returns the JSON-LD document for a previously crawled URL, identified by its MD5 (lowercase hex) of the URL.
+        Supports conditional GETs via `If-None-Match` and returns `304 Not Modified` when appropriate.
+      operationId: getJsonLdById
+      security:
+        - BearerAuth: [ ]
+      parameters:
+        - in: path
+          name: id
+          required: true
+          description: |
+            MD5 of the absolute URL (32 lowercase hexadecimal characters).
+            Example: `7c165c13f93d7ca168bcfbd73cf563e3`.
+          schema:
+            type: string
+            pattern: '^[a-f0-9]{32}$'
+        - in: header
+          name: If-None-Match
+          required: false
+          description: |
+            Conditional request. Return `304 Not Modified` if the supplied ETag matches the current resource ETag.
+          schema:
+            type: string
+      responses:
+        '200':
+          $ref: '#/components/responses/OkJsonLd'
+        '304':
+          $ref: '#/components/responses/NotModified'
+        '400':
+          $ref: '#/components/responses/BadRequest'
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '404':
+          $ref: '#/components/responses/NotFound'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/ServerError'
+components:
+  securitySchemes:
+    BearerAuth:
+      type: http
+      scheme: bearer
+      description: |
+        Standard HTTP Bearer token in `Authorization` header.
+
+  headers:
+    RateLimit-Limit:
+      description: Maximum requests in current window.
+      schema:
+        type: integer
+        minimum: 0
+    RateLimit-Remaining:
+      description: Remaining requests in current window.
+      schema:
+        type: integer
+        minimum: 0
+    RateLimit-Reset:
+      description: UNIX timestamp when rate limit resets.
+      schema:
+        type: integer
+        minimum: 0
+    Location:
+      description: URL of the newly created resource.
+      schema:
+        type: string
+        format: uri
+    ETag:
+      description: Entity tag for conditional requests.
+      schema:
+        type: string
+
+  schemas:
+    JsonLdRequest:
+      type: object
+      description: Payload for JSON-LD generation.
+      additionalProperties: false
+      required: [url]
+      properties:
+        url:
+          type: string
+          format: uri
+          description: |
+            The target page URL to generate JSON-LD for.
+            Example: `https://example.com/blog/automatic-jsonld-with-enhancely`.
+
+    JsonLdDocument:
+      type: object
+      description: |
+        A JSON-LD document (Schema.org format). May include any fields.
+      additionalProperties: true
+
+    Problem:
+      type: object
+      description: Standard error object in RFC 7807 style.
+      properties:
+        type:
+          type: string
+          format: uri
+          description: URI identifying the error type.
+        title:
+          type: string
+          description: Short error summary.
+        status:
+          type: integer
+          description: HTTP status code.
+        detail:
+          type: string
+          description: Human-readable error details.
+        instance:
+          type: string
+          description: URI identifying this error occurrence.
+        code:
+          type: string
+          description: Optional machine-readable error code.
+      additionalProperties: true
+
+  requestBodies:
+    JsonLdRequestBody:
+      description: JSON body with the URL to generate JSON-LD for.
+      required: true
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/JsonLdRequest'
+          example:
+            - url: "https://example.com/blog/automatic-jsonld-with-enhancely"
+
+  responses:
+    CreatedJsonLd:
+      description: JSON-LD generated; resource created for first time.
+      headers:
+        content:
+          application/ld+json:
+            schema: { $ref: '#/components/schemas/JsonLdDocument' }
+          application/json:
+            schema: { $ref: '#/components/schemas/JsonLdDocument' }
+        ETag:
+          $ref: '#/components/headers/ETag'
+        Location:
+          $ref: '#/components/headers/Location'
+        RateLimit-Limit:
+          $ref: '#/components/headers/RateLimit-Limit'
+        RateLimit-Remaining:
+          $ref: '#/components/headers/RateLimit-Remaining'
+        RateLimit-Reset:
+          $ref: '#/components/headers/RateLimit-Reset'
+      content:
+        application/ld+json:
+          schema:
+            $ref: '#/components/schemas/JsonLdDocument'
+        application/json:
+          schema:
+            $ref: '#/components/schemas/JsonLdDocument'
+
+    NotModified:
+      description: Not modified (ETag matched; no body returned).
+
+    NotFound:
+      description: Not found.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+
+    OkJsonLd:
+      description: JSON-LD returned; already existed or recently generated.
+      headers:
+        content:
+          application/ld+json:
+            schema:
+              $ref: '#/components/schemas/JsonLdDocument'
+          application/json:
+            schema:
+              $ref: '#/components/schemas/JsonLdDocument'
+        ETag:
+          description: Entity tag for conditional requests.
+          schema: { type: string }
+        RateLimit-Limit:
+          $ref: '#/components/headers/RateLimit-Limit'
+        RateLimit-Remaining:
+          $ref: '#/components/headers/RateLimit-Remaining'
+        RateLimit-Reset:
+          $ref: '#/components/headers/RateLimit-Reset'
+
+    BadRequest:
+      description: Malformed or invalid URL in request.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+    Unauthorized:
+      description: Missing or invalid bearer token.
+      headers:
+        WWW-Authenticate:
+          description: Bearer authentication required.
+          schema:
+            type: string
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+    UnsupportedMediaType415:
+      description: Content-Type not supported.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+    TooManyRequests:
+      description: Rate limit exceeded.
+      headers:
+        RateLimit-Limit:
+          $ref: '#/components/headers/RateLimit-Limit'
+        RateLimit-Remaining:
+          $ref: '#/components/headers/RateLimit-Remaining'
+        RateLimit-Reset:
+          $ref: '#/components/headers/RateLimit-Reset'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+    ServerError:
+      description: Unexpected server error.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'

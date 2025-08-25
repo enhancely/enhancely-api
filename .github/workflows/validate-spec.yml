@@ -1,0 +1,39 @@
+name: Validate OpenAPI Spec
+
+on:
+  push:
+    branches:
+      - main
+    paths:
+      - 'openapi/**/*.y?(a)ml'
+  pull_request:
+    paths:
+      - 'openapi/**/*.y?(a)ml'
+
+env:
+  SPEC_PATH: openapi/openapi_v1.yaml
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      # OpenAPI Generator validate (extra spec sanity + gen readiness)
+      - name: Setup Java (for openapi-generator-cli)
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Validate with OpenAPI Generator
+        run: |
+          npx @openapitools/openapi-generator-cli validate -i ${{ env.SPEC_PATH }}
+
+      # Optional: keep artifacts for inspection
+      - name: Upload bundled spec
+        uses: actions/upload-artifact@v4
+        with:
+          name: openapi-bundle
+          path: openapi/bundled.yaml

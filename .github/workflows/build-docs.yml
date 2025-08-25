@@ -1,0 +1,45 @@
+name: Build & Commit ReDoc
+
+on:
+  workflow_run:
+    workflows: [ "Validate OpenAPI Spec" ]
+    types: [ completed ]
+    branches: [ main ]
+
+permissions:
+  contents: write  # required to push commits
+
+concurrency:
+  group: redoc-${{ github.ref }}
+  cancel-in-progress: false
+
+env:
+  SPEC_PATH: openapi/openapi_v1.yaml
+  OUTPUT_PATH: docs/index.html
+
+jobs:
+  build-and-commit:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # safer for auto-commit actions
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install deps
+        run: npm ci
+
+      - name: Build static ReDoc HTML
+        run: npm run build-docs --if-present
+
+      - name: Commit updated docs
+        uses: stefanzweifel/git-auto-commit-action@v5
+        with:
+          commit_message: "docs(redoc): rebuild from ${SPEC_PATH}"
+          file_pattern: ${{ env.OUTPUT_PATH }}
