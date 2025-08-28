@@ -47,6 +47,8 @@ paths:
           $ref: '#/components/responses/CreatedJsonLd'
         '200':
           $ref: '#/components/responses/OkJsonLd'
+        '304':
+          $ref: '#/components/responses/NotModified'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
