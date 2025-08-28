@@ -47,12 +47,12 @@ paths:
           $ref: '#/components/responses/CreatedJsonLd'
         '200':
           $ref: '#/components/responses/OkJsonLd'
-        '304':
-          $ref: '#/components/responses/NotModified'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '412':
+          $ref: '#/components/responses/PreconditionFailed'
         '415':
           $ref: '#/components/responses/UnsupportedMediaType415'
         '429':
@@ -261,6 +261,13 @@ components:
           description: Bearer authentication required.
           schema:
             type: string
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+
+    PreconditionFailed:
+      description: Precondition Failed.
       content:
         application/json:
           schema:
