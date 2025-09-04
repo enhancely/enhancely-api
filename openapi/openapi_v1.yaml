@@ -59,7 +59,7 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/ServerError'
-  /api/v1/jsonld/{id}:
+  /api/v1/jsonld/{hash}:
     get:
       tags: [ jsonld ]
       summary: Retrieve a JSON-LD entry by ID
@@ -71,7 +71,7 @@ paths:
         - BearerAuth: [ ]
       parameters:
         - in: path
-          name: id
+          name: hash
           required: true
           description: |
             MD5 of the absolute URL (32 lowercase hexadecimal characters).
@@ -189,7 +189,7 @@ components:
           schema:
             $ref: '#/components/schemas/JsonLdRequest'
           example:
-            - url: "https://example.com/blog/automatic-jsonld-with-enhancely"
+            url: "https://example.com/blog/automatic-jsonld-with-enhancely"
 
   responses:
     CreatedJsonLd:
