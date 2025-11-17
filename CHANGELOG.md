@@ -1,5 +1,48 @@
 # Changelog
 
+## [1.0.2] – 2025-01-17
+
+### Documentation Enhancements
+
+This release significantly improves the OpenAPI documentation based on analysis of production implementations, providing practical guidance for integrators.
+
+#### Integration Approaches
+- Added "POST vs GET: Which Endpoint to Use" subsection with clear guidance on when to use each endpoint
+- Enhanced CMS integration guidance with 6-step integration flow
+- Added URL normalization best practices (strip query params, hashes, trailing slashes)
+- Documented cache-first strategy and silent degradation patterns
+- Specified recommended 1-week TTL for cache duration
+
+#### Cache Strategy
+- Streamlined implementation best practices with clear 5-step recommended flow
+- Consolidated cache key generation, duration, and invalidation guidance
+- Removed verbose code examples in favor of concise bullet points
+- Emphasized MD5 hash of normalized URLs for cache keys
+
+#### Rate Limiting
+- Added rate limit headers documentation with examples
+- Documented 429 response format
+- Consolidated best practices into 4 clear recommendations:
+  1. Implement aggressive caching (1-week TTL minimum)
+  2. Monitor rate limit headers
+  3. Implement retry logic with exponential backoff
+  4. Use silent degradation
+- Removed excessive code examples
+
+#### Error Handling (NEW)
+- Added comprehensive HTTP status code reference table with recommended actions
+- Documented RFC 7807 Problem Details error format
+- Consolidated error handling into practical best practices:
+  - Silent degradation pattern
+  - Response handling checklist
+  - Cache management during errors
+- Explained handling of 201/202 responses (first-time requests return empty until ready)
+
+### Technical Improvements
+- Documentation now reflects production-tested patterns and values
+- Removed framework-specific code examples while retaining general patterns
+- Simplified overall structure for better readability
+
 ## [1.0.1] – 2025-11-17
 
 ### Documentation

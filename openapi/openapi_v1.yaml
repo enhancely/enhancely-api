@@ -22,27 +22,40 @@ info:
 
     ## Integration Approaches
 
+    ### POST vs GET: Which Endpoint to Use
+
+    **Use POST /api/v1/jsonld for CMS & Website Integration:**
+    - Primary endpoint for page-level integration
+    - Automatically creates records if they don't exist
+    - Supports sending complex URLs in request body (no query string length limits)
+    - Returns `412 Precondition Failed` when ETag matches (cache valid)
+    - Ideal for server-side rendering in templates
+
+    **Use GET /api/v1/jsonld/{hash} for:**
+    - Polling processing status after receiving 201/202 from POST
+    - Direct retrieval when you already have the MD5 hash
+    - Returns `304 Not Modified` when ETag matches (cache valid)
+
+    **Use GET /api/v1/jsonld for:**
+    - Listing all JSON-LD records for your domain
+    - Monitoring and troubleshooting with filters
+
     ### CMS Plugins & Website Integration (Recommended)
 
-    For integrating Enhancely into your website or CMS, use the **POST /api/v1/jsonld** endpoint with proper HTTP caching:
+    For integrating Enhancely into your website or CMS, follow this pattern:
 
-    - Send the page URL with the `If-None-Match` header containing your cached ETag
-    - The API returns `412 Precondition Failed` when content hasn't changed, minimizing bandwidth and processing
-    - New or updated content returns `200 OK` with fresh JSON-LD and a new ETag
-    - Cache the ETag and JSON-LD response on your server for optimal performance
+    1. **Template Integration**: Add the API call in your page template's `<head>` section
+    2. **URL Normalization**: Strip query parameters, hashes, and trailing slashes before caching
+    3. **Cache-First Strategy**: Check local cache before making API requests (recommended TTL: 1 week)
+    4. **ETag Validation**: Always send `If-None-Match` header with cached ETag
+    5. **Silent Degradation**: Return empty output on errors to avoid breaking page rendering
+    6. **Cache Invalidation**: Clear cache when page content is updated
 
     ### Bulk Operations
 
     **Sitemap Indexation**: Automatic crawling of all URLs in your sitemap.xml is available through the Enhancely platform (not via API). This feature requires appropriate access rights and is ideal for initial setup or when adding many pages at once.
 
     **Nightly Updates**: Enhancely automatically checks all indexed URLs nightly to detect content changes and regenerate JSON-LD when needed, keeping your structured data fresh without manual intervention.
-
-    ### Monitoring & Retrieval
-
-    The **GET** endpoints allow you to:
-    - List all JSON-LD records for your domain with filtering options
-    - Retrieve specific JSON-LD documents by URL hash
-    - Monitor processing status and troubleshoot issues
 
     ## Cache Strategy
 
@@ -109,43 +122,29 @@ info:
     - Minor HTML changes (like navigation updates) don't trigger regeneration if the core content is unchanged
     - Your cached JSON-LD remains valid longer, reducing API calls
 
-    ### Recommended Client Implementation
+    ### Implementation Best Practices
 
-    ```javascript
-    // Pseudocode for optimal integration
-    async function getJsonLd(pageUrl) {
-      const cachedETag = cache.get(pageUrl + ':etag');
+    **Cache Key Generation:**
+    - Use MD5 hash of the normalized URL as the cache key
+    - Normalize URLs consistently: remove query params, hashes, and trailing slashes
+    - Store both ETag and JSON-LD data separately
 
-      const response = await fetch('https://enhancely.ai/api/v1/jsonld', {
-        method: 'POST',
-        headers: {
-          'Authorization': 'Bearer YOUR_API_KEY',
-          'Content-Type': 'application/json',
-          'Accept': 'application/json',
-          'If-None-Match': cachedETag || ''
-        },
-        body: JSON.stringify({ url: pageUrl })
-      });
+    **Cache Duration:**
+    - **Recommended TTL**: 1 week (604,800 seconds)
+    - Longer TTLs reduce API load since Enhancely automatically updates content nightly
+    - ETags remain valid across nightly updates if content hasn't changed
 
-      if (response.status === 412) {
-        // ETag matches - use cached JSON-LD
-        return cache.get(pageUrl + ':jsonld');
-      }
+    **Cache Invalidation:**
+    - Clear cache when page content is updated (e.g., via CMS hooks)
+    - Optional: Clear cache in local/development environments for testing
+    - Prevent page-level caching when API errors occur
 
-      if (response.ok) {
-        const data = await response.json();
-        const newETag = response.headers.get('ETag');
-
-        // Cache both the JSON-LD and ETag
-        cache.set(pageUrl + ':jsonld', data);
-        cache.set(pageUrl + ':etag', newETag);
-
-        return data;
-      }
-
-      throw new Error('Failed to fetch JSON-LD');
-    }
-    ```
+    **Recommended Flow:**
+    1. Check local cache for ETag and JSON-LD data
+    2. Make POST request with `If-None-Match` header containing cached ETag
+    3. Handle 412 response by returning cached data (ETag still valid)
+    4. Handle 200 response by caching new ETag and JSON-LD with 1-week TTL
+    5. Handle errors by returning cached data or empty output (silent degradation)
 
     ## Processing Model
 
@@ -166,7 +165,108 @@ info:
 
     ## Rate Limiting
 
-    All endpoints are rate-limited per domain. Each response includes rate limit headers (`RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset`). When limits are exceeded, the API returns `429 Too Many Requests`.
+    All endpoints are rate-limited per domain. Each response includes rate limit headers to help you track your usage.
+
+    ### Rate Limit Headers
+
+    ```http
+    RateLimit-Limit: 100        # Maximum requests allowed in the current window
+    RateLimit-Remaining: 75     # Requests remaining in the current window
+    RateLimit-Reset: 1640000000 # Unix timestamp when the limit resets
+    ```
+
+    ### Handling Rate Limits
+
+    **429 Too Many Requests Response:**
+    ```json
+    {
+      "type": "https://enhancely.ai/problems/rate-limit-exceeded",
+      "title": "Rate Limit Exceeded",
+      "status": 429,
+      "detail": "You have exceeded your rate limit. Please try again later."
+    }
+    ```
+
+    ### Best Practices for Rate Limit Management
+
+    **1. Implement Aggressive Caching**
+
+    The most effective rate limit strategy is to **avoid making API calls** through proper caching:
+
+    - Cache responses with a 1-week TTL minimum
+    - Always send `If-None-Match` headers with cached ETags
+    - 412 responses use minimal bandwidth and help avoid rate limits
+    - Only make new requests when cache is cold or content changes
+
+    **2. Monitor Rate Limit Headers**
+
+    Check `RateLimit-Remaining` and `RateLimit-Reset` headers to track usage and implement proactive backoff when limits are approaching.
+
+    **3. Implement Retry Logic**
+
+    For 429 responses, wait until the `RateLimit-Reset` timestamp before retrying. For 5xx server errors, use exponential backoff (e.g., 1s, 2s, 4s).
+
+    **4. Use Silent Degradation**
+
+    When rate limited or encountering errors, return cached data or empty output rather than breaking page rendering.
+
+    ## Error Handling
+
+    Proper error handling ensures your integration degrades gracefully when issues occur. The API uses standard HTTP status codes and RFC 7807 Problem Details format.
+
+    ### HTTP Status Codes
+
+    | Status | Meaning | Action |
+    |--------|---------|--------|
+    | **200 OK** | JSON-LD ready and returned | Cache and render |
+    | **201 Created** | URL queued for first-time processing | Wait/poll, return empty or cached |
+    | **202 Accepted** | Processing in progress | Wait/poll, return empty or cached |
+    | **304 Not Modified** | GET with ETag - content unchanged | Use cached data |
+    | **400 Bad Request** | Invalid URL or malformed request | Log error, return empty |
+    | **401 Unauthorized** | Missing/invalid API key | Check API key configuration |
+    | **404 Not Found** | Resource doesn't exist | Log error, return empty |
+    | **412 Precondition Failed** | POST with ETag - content unchanged | Use cached data |
+    | **415 Unsupported Media Type** | Wrong Content-Type header | Set `Content-Type: application/json` |
+    | **429 Too Many Requests** | Rate limit exceeded | Wait for `RateLimit-Reset`, use cached data |
+    | **500 Server Error** | Internal server error | Retry with backoff, use cached data |
+    | **502 Bad Gateway** | Upstream service error | Retry with backoff, use cached data |
+    | **503 Service Unavailable** | Service temporarily down | Retry with backoff, use cached data |
+
+    ### Error Response Format
+
+    All error responses follow RFC 7807 Problem Details format:
+
+    ```json
+    {
+      "type": "https://enhancely.ai/problems/rate-limit-exceeded",
+      "title": "Rate Limit Exceeded",
+      "status": 429,
+      "detail": "You have exceeded your rate limit. Please try again later.",
+      "instance": "/api/v1/jsonld"
+    }
+    ```
+
+    ### Best Practices
+
+    **Silent Degradation (Recommended)**
+    - Return cached data or empty output when errors occur
+    - Never break page rendering due to API errors
+    - Log errors in debug/development mode with HTML comments
+    - Use monitoring systems in production (Sentry, New Relic, etc.)
+
+    **Response Handling:**
+    - ✅ Cache only successful 200 responses with ETag
+    - ✅ Return cached data for 412 (ETag matches)
+    - ✅ Return empty or cached data for 201/202 (processing) - first-time requests return empty until ready
+    - ✅ Return cached data on 5xx errors, retry with exponential backoff
+    - ✅ Log and return empty on 400/401/404 - don't retry client errors
+    - ✅ Wait for `RateLimit-Reset` on 429, return cached data
+
+    **Cache Management:**
+    - Prevent page-level caching when API errors occur (use cache-control headers or framework-specific mechanisms)
+    - Clear local cache only when page content is updated
+    - Skip API calls entirely on error pages (404, 500)
+
 servers:
   - url: https://enhancely.ai
     description: API V1
@@ -422,8 +522,32 @@ paths:
 
         ## When to Use GET vs POST
 
-        - Use **POST /api/v1/jsonld**: For CMS integration, when you have the URL and want automatic creation/retrieval with optimal caching
-        - Use **GET /api/v1/jsonld/{hash}**: When you already have the hash and want to check status or retrieve by ID
+        **Use POST /api/v1/jsonld (Recommended for Integration):**
+        - ✅ CMS plugins and website integrations
+        - ✅ When you have the page URL (not the hash)
+        - ✅ When you want automatic creation if URL doesn't exist
+        - ✅ For ETag-based caching with `If-None-Match` header (returns 412)
+        - ✅ When sending complex URLs that may exceed query string limits
+        - ✅ First-time requests that need async processing (201/202 status)
+
+        **Use GET /api/v1/jsonld/{hash}:**
+        - ✅ When you already have the MD5 hash of the URL
+        - ✅ Polling for processing status after receiving 201/202 from POST
+        - ✅ Direct retrieval when hash is known
+        - ✅ For ETag-based caching with `If-None-Match` header (returns 304)
+        - ✅ Monitoring and administrative tasks
+
+        **Use GET /api/v1/jsonld (list endpoint):**
+        - ✅ Auditing all JSON-LD records for your domain
+        - ✅ Bulk status checking with filters
+        - ✅ Monitoring and troubleshooting
+        - ✅ Building internal dashboards
+
+        **Key Differences:**
+        - POST creates new records (201) if they don't exist; GET returns 404
+        - POST with `If-None-Match` returns 412; GET with `If-None-Match` returns 304
+        - POST sends URL in request body; GET sends hash in URL path
+        - Both support ETag-based conditional requests for efficient caching
 
       operationId: getJsonLdById
       security:
