@@ -27,7 +27,7 @@ info:
     For integrating Enhancely into your website or CMS, use the **POST /api/v1/jsonld** endpoint with proper HTTP caching:
 
     - Send the page URL with the `If-None-Match` header containing your cached ETag
-    - The API returns `304 Not Modified` when content hasn't changed, minimizing bandwidth and processing
+    - The API returns `412 Precondition Failed` when content hasn't changed, minimizing bandwidth and processing
     - New or updated content returns `200 OK` with fresh JSON-LD and a new ETag
     - Cache the ETag and JSON-LD response on your server for optimal performance
 
@@ -55,30 +55,42 @@ info:
     ```http
     # First request
     POST /api/v1/jsonld
+    Authorization: Bearer YOUR_API_KEY
     Content-Type: application/json
+    Accept: application/json
 
     {"url": "https://example.com/page"}
 
     HTTP/1.1 200 OK
     ETag: "a1b2c3d4e5f6"
+    Content-Type: application/json
 
-    {...JSON-LD content...}
+    {
+      "hash": "7c165c13f93d7ca168bcfbd73cf563e3",
+      "url": "https://example.com/page",
+      "jsonld": {...},
+      "metadata": {},
+      "etag": "a1b2c3d4e5f6",
+      "crawled_at": "2025-01-16T14:30:00Z",
+      "status": "ready"
+    }
     ```
 
     ```http
     # Subsequent request with cached ETag
     POST /api/v1/jsonld
+    Authorization: Bearer YOUR_API_KEY
     Content-Type: application/json
+    Accept: application/json
     If-None-Match: "a1b2c3d4e5f6"
 
     {"url": "https://example.com/page"}
 
-    HTTP/1.1 304 Not Modified
-    ETag: "a1b2c3d4e5f6"
+    HTTP/1.1 412 Precondition Failed
     ```
 
     **Benefits:**
-    - `304 Not Modified` responses have no body, saving bandwidth
+    - `412 Precondition Failed` responses have no body, saving bandwidth
     - Avoids redundant processing when content hasn't changed
     - Standard HTTP caching mechanism supported by all HTTP clients
     - Learn more: [MDN: HTTP Conditional Requests](https://developer.mozilla.org/en-US/docs/Web/HTTP/Conditional_requests)
@@ -109,25 +121,26 @@ info:
         headers: {
           'Authorization': 'Bearer YOUR_API_KEY',
           'Content-Type': 'application/json',
+          'Accept': 'application/json',
           'If-None-Match': cachedETag || ''
         },
         body: JSON.stringify({ url: pageUrl })
       });
 
-      if (response.status === 304) {
-        // Use cached JSON-LD
+      if (response.status === 412) {
+        // ETag matches - use cached JSON-LD
         return cache.get(pageUrl + ':jsonld');
       }
 
       if (response.ok) {
-        const jsonLd = await response.json();
+        const data = await response.json();
         const newETag = response.headers.get('ETag');
 
         // Cache both the JSON-LD and ETag
-        cache.set(pageUrl + ':jsonld', jsonLd);
+        cache.set(pageUrl + ':jsonld', data);
         cache.set(pageUrl + ':etag', newETag);
 
-        return jsonLd;
+        return data;
       }
 
       throw new Error('Failed to fetch JSON-LD');
@@ -139,16 +152,17 @@ info:
     JSON-LD generation is **asynchronous**. When you submit a URL:
 
     1. **201 Created**: The URL is queued for processing (first time submission)
-    2. **200 OK**: The JSON-LD already exists (with current status)
+    2. **202 Accepted**: The URL exists but is currently being processed
+    3. **200 OK**: The JSON-LD already exists and is available (with current status)
 
     Processing can take up to a few minutes depending on page complexity and queue depth. The response includes a `status` field:
 
-    - `created`: Queued for processing, JSON-LD generation hasn't started yet
-    - `updating`: Currently being processed
-    - `ready`: JSON-LD is available and ready to use
+    - `created`: Queued for processing, JSON-LD generation hasn't started yet (typically returns 201 on first POST)
+    - `updating`: Currently being processed (returns 202 when still processing)
+    - `ready`: JSON-LD is available and ready to use (returns 200 with full content)
     - `failed`: Generation failed (e.g., invalid page, unreachable URL)
 
-    For newly created records, poll the **GET /api/v1/jsonld/{hash}** endpoint to know when processing completes.
+    For newly created records or records being processed (201/202 responses), poll the **GET /api/v1/jsonld/{hash}** endpoint to check when processing completes and the status becomes `ready`.
 
     ## Rate Limiting
 
@@ -326,7 +340,7 @@ paths:
           name: If-None-Match
           required: false
           description: |
-            Optional. The ETag value from a previous response. If provided and matches the current ETag, returns `304 Not Modified` or `412 Precondition Failed`.
+            Optional. The ETag value from a previous response. If provided and matches the current ETag, returns `412 Precondition Failed`.
           schema:
             type: string
           example: "a1b2c3d4e5f6"

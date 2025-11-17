@@ -14,6 +14,9 @@
 - Documented request headers (If-None-Match, Accept) with required vs optional specifications
 - Added proper schema documentation for both `application/json` and `application/ld+json` response formats
 - Clarified POST endpoint returns 412 Precondition Failed (not 304) when ETag matches
+- Updated all code samples to include Authorization, Content-Type, and Accept headers
+- Corrected HTTP caching examples to show 412 (not 304) for POST endpoint
+- Updated Processing Model section to comprehensively document 201, 202, and 200 response codes with status field mappings
 
 ### Improvements
 - Enhanced documentation of ETag-based caching workflow
