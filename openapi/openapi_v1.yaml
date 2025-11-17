@@ -3,21 +3,253 @@ jsonSchemaDialect: https://spec.openapis.org/oas/3.1/dialect/base
 info:
   title: Enhancely API
   version: "1.0.0"
+  x-logo:
+    url: enhancely-logo.png
+    altText: Enhancely Logo
+    backgroundColor: "#FFFFFF"
+    href: https://enhancely.ai
+  description: |
+    ## Overview
+
+    The Enhancely API provides automatic generation and retrieval of Schema.org JSON-LD structured data for your web pages. This structured data helps search engines, AI platforms, and AI search tools better understand and represent your content.
+
+    ## Prerequisites
+
+    This API is exclusively available to Enhancely customers who have:
+    1. Added their domain to the Enhancely platform
+    2. Validated domain ownership
+    3. Retrieved their domain-specific API key
+
+    ## Integration Approaches
+
+    ### CMS Plugins & Website Integration (Recommended)
+
+    For integrating Enhancely into your website or CMS, use the **POST /api/v1/jsonld** endpoint with proper HTTP caching:
+
+    - Send the page URL with the `If-None-Match` header containing your cached ETag
+    - The API returns `304 Not Modified` when content hasn't changed, minimizing bandwidth and processing
+    - New or updated content returns `200 OK` with fresh JSON-LD and a new ETag
+    - Cache the ETag and JSON-LD response on your server for optimal performance
+
+    ### Bulk Operations
+
+    **Sitemap Indexation**: Automatic crawling of all URLs in your sitemap.xml is available through the Enhancely platform (not via API). This feature requires appropriate access rights and is ideal for initial setup or when adding many pages at once.
+
+    **Nightly Updates**: Enhancely automatically checks all indexed URLs nightly to detect content changes and regenerate JSON-LD when needed, keeping your structured data fresh without manual intervention.
+
+    ### Monitoring & Retrieval
+
+    The **GET** endpoints allow you to:
+    - List all JSON-LD records for your domain with filtering options
+    - Retrieve specific JSON-LD documents by URL hash
+    - Monitor processing status and troubleshoot issues
+
+    ## Cache Strategy
+
+    Enhancely implements a sophisticated multi-layer caching system:
+
+    ### HTTP-Level Caching (ETags)
+
+    Every JSON-LD response includes an `ETag` header—a unique identifier for that version of the content. Use ETags for efficient caching:
+
+    ```http
+    # First request
+    POST /api/v1/jsonld
+    Content-Type: application/json
+
+    {"url": "https://example.com/page"}
+
+    HTTP/1.1 200 OK
+    ETag: "a1b2c3d4e5f6"
+
+    {...JSON-LD content...}
+    ```
+
+    ```http
+    # Subsequent request with cached ETag
+    POST /api/v1/jsonld
+    Content-Type: application/json
+    If-None-Match: "a1b2c3d4e5f6"
+
+    {"url": "https://example.com/page"}
+
+    HTTP/1.1 304 Not Modified
+    ETag: "a1b2c3d4e5f6"
+    ```
+
+    **Benefits:**
+    - `304 Not Modified` responses have no body, saving bandwidth
+    - Avoids redundant processing when content hasn't changed
+    - Standard HTTP caching mechanism supported by all HTTP clients
+    - Learn more: [MDN: HTTP Conditional Requests](https://developer.mozilla.org/en-US/docs/Web/HTTP/Conditional_requests)
+
+    ### Content Change Detection
+
+    Internally, Enhancely tracks HTML content changes by hashing the page content. When a URL is re-crawled:
+
+    1. The page HTML is fetched and hashed
+    2. If the hash matches the previous crawl, JSON-LD generation is skipped
+    3. Only the `crawledAt` timestamp is updated
+    4. The existing ETag remains valid
+
+    This means:
+    - ETags only change when actual content changes occur
+    - Minor HTML changes (like navigation updates) don't trigger regeneration if the core content is unchanged
+    - Your cached JSON-LD remains valid longer, reducing API calls
+
+    ### Recommended Client Implementation
+
+    ```javascript
+    // Pseudocode for optimal integration
+    async function getJsonLd(pageUrl) {
+      const cachedETag = cache.get(pageUrl + ':etag');
+
+      const response = await fetch('https://enhancely.ai/api/v1/jsonld', {
+        method: 'POST',
+        headers: {
+          'Authorization': 'Bearer YOUR_API_KEY',
+          'Content-Type': 'application/json',
+          'If-None-Match': cachedETag || ''
+        },
+        body: JSON.stringify({ url: pageUrl })
+      });
+
+      if (response.status === 304) {
+        // Use cached JSON-LD
+        return cache.get(pageUrl + ':jsonld');
+      }
+
+      if (response.ok) {
+        const jsonLd = await response.json();
+        const newETag = response.headers.get('ETag');
+
+        // Cache both the JSON-LD and ETag
+        cache.set(pageUrl + ':jsonld', jsonLd);
+        cache.set(pageUrl + ':etag', newETag);
+
+        return jsonLd;
+      }
+
+      throw new Error('Failed to fetch JSON-LD');
+    }
+    ```
+
+    ## Processing Model
+
+    JSON-LD generation is **asynchronous**. When you submit a URL:
+
+    1. **201 Created**: The URL is queued for processing (first time submission)
+    2. **200 OK**: The JSON-LD already exists (with current status)
+
+    Processing can take up to a few minutes depending on page complexity and queue depth. The response includes a `status` field:
+
+    - `created`: Queued for processing, JSON-LD generation hasn't started yet
+    - `updating`: Currently being processed
+    - `ready`: JSON-LD is available and ready to use
+    - `failed`: Generation failed (e.g., invalid page, unreachable URL)
+
+    For newly created records, poll the **GET /api/v1/jsonld/{hash}** endpoint or use webhooks (if configured) to know when processing completes.
+
+    ## Rate Limiting
+
+    All endpoints are rate-limited per domain. Each response includes rate limit headers (`RateLimit-Limit`, `RateLimit-Remaining`, `RateLimit-Reset`). When limits are exceeded, the API returns `429 Too Many Requests`.
 servers:
   - url: https://enhancely.ai
     description: API V1
 tags:
-  - name: jsonld
-    description: Endpoints dealing with JSON-LD generation and retrieval.
+  - name: JSON-LD Endpoints
+    description: |
+      Endpoints for generating and retrieving Schema.org JSON-LD structured data from web page URLs.
+
+      These endpoints enable automatic creation of rich structured data that helps search engines, AI platforms, and AI search tools better understand and represent your content.
+x-tagGroups:
+  - name: Enhancely API
+    tags:
+      - JSON-LD Endpoints
 
 paths:
   /api/v1/jsonld:
     get:
-      tags: [ jsonld ]
-      summary: Retrieve the list of JSON-LD URLs
+      tags: [ JSON-LD Endpoints ]
+      summary: List all JSON-LD records for your domain
+      description: |
+        Retrieves a list of all JSON-LD records associated with your domain, providing an overview of indexed URLs and their processing status.
+
+        **Primary use cases:** Monitoring, troubleshooting, and auditing. For website integration, use the POST endpoint instead.
+
+        **Filtering:** Supports filtering by `status`, `hash`, `etag`, `url`, and timestamps (`created_at`, `updated_at`, `crawled_at`).
       operationId: getJsonLdList
       security:
         - BearerAuth: []
+      parameters:
+        - in: query
+          name: etag
+          required: false
+          description: |
+            Filter by ETag value. Use `*` to match any record with an ETag, or provide a specific ETag value.
+          schema:
+            type: string
+          example: "a1b2c3d4e5f6"
+        - in: query
+          name: hash
+          required: false
+          description: |
+            Filter by MD5 hash of the URL. See GET /api/v1/jsonld/{hash} endpoint for hash calculation details.
+          schema:
+            type: string
+            pattern: '^[a-f0-9]{32}$'
+          example: "7c165c13f93d7ca168bcfbd73cf563e3"
+        - in: query
+          name: url
+          required: false
+          description: |
+            Filter by the source URL.
+          schema:
+            type: string
+            format: uri
+          example: "https://example.com/page"
+        - in: query
+          name: id
+          required: false
+          description: |
+            Filter by JSON-LD @id field.
+          schema:
+            type: string
+        - in: query
+          name: status
+          required: false
+          description: |
+            Filter by processing status.
+          schema:
+            $ref: '#/components/schemas/JsonLdStatus'
+          example: "ready"
+        - in: query
+          name: created_at
+          required: false
+          description: |
+            Filter records created after this timestamp (greater than comparison).
+          schema:
+            type: string
+            format: date-time
+          example: "2025-01-01T00:00:00Z"
+        - in: query
+          name: updated_at
+          required: false
+          description: |
+            Filter records updated after this timestamp (greater than comparison).
+          schema:
+            type: string
+            format: date-time
+          example: "2025-01-01T00:00:00Z"
+        - in: query
+          name: crawled_at
+          required: false
+          description: |
+            Filter records crawled after this timestamp (greater than comparison).
+          schema:
+            type: string
+            format: date-time
+          example: "2025-01-01T00:00:00Z"
       responses:
         '200':
           $ref: '#/components/responses/OkJsonLd'
@@ -30,13 +262,62 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
     post:
-      tags: [ jsonld ]
-      summary: Create and retrieve JSON-LD for a page
+      tags: [ JSON-LD Endpoints ]
+      summary: Generate or retrieve JSON-LD for a URL (Primary Integration Endpoint)
       description: |
-        Accept a page URL and return JSON-LD.
-        - **201**: new JSON-LD was created (didn't exist before).
-        - **200**: existing JSON-LD returned.
-        - **415** returned if `Content-Type` is not supported.
+        **This is the recommended endpoint for CMS plugins and website integrations.**
+
+        Submits a URL for JSON-LD generation or retrieves existing JSON-LD if already processed. This endpoint is designed for optimal performance with HTTP caching using ETags.
+
+        ## How It Works
+
+        JSON-LD generation is **asynchronous**. See the **Processing Model** section in the API overview for complete details on status values and lifecycle.
+
+        **Response Codes:**
+        - **201 Created**: New URL queued for first-time processing
+        - **200 OK**: URL already exists (check `status` field for current state)
+        - **304 Not Modified**: Cached version is current (when using If-None-Match)
+
+        **Status Values:** `created` → `updating` → `ready` or `failed`
+
+        ### Subsequent Requests (With Cache)
+
+        On subsequent requests, include the `If-None-Match` header with your cached ETag:
+
+        ```http
+        POST /api/v1/jsonld
+        Authorization: Bearer YOUR_API_KEY
+        Content-Type: application/json
+        If-None-Match: "a1b2c3d4e5f6"
+
+        {"url": "https://example.com/page"}
+        ```
+
+        **Response:**
+        - **304 Not Modified**: Your cached JSON-LD is still current (no body returned)
+        - **200 OK**: Content has changed, fresh JSON-LD returned with new ETag
+        - **412 Precondition Failed**: ETag provided but matches current version (cache still valid, similar to 304)
+
+        ## HTTP Caching with ETags
+
+        This endpoint supports standard HTTP conditional requests using ETags for efficient caching. For complete details, see the **Cache Strategy** section in the API overview above.
+
+        **Quick Reference:**
+        - Include `If-None-Match: "etag-value"` header to check for changes
+        - Response `304 Not Modified` = use your cached version (no body)
+        - Response `200 OK` = new content available with updated ETag
+
+        ## Best Practices for Integration
+
+        1. **Always cache both ETag and JSON-LD** after receiving a 200/201 response
+        2. **Always send If-None-Match** with the cached ETag on subsequent requests
+        3. **Handle 304 responses** by using your cached JSON-LD (no new data in body)
+        4. **Handle 201/202 responses** for new URLs by polling or using webhooks until status is `ready`
+        5. **Respect rate limits** shown in `RateLimit-*` headers
+
+        After a successful crawl, Enhancely automatically re-checks URLs nightly to detect content changes. If changes are detected, the JSON-LD is regenerated and a new ETag is issued.
+
+
       operationId: postJsonLd
       security:
         - BearerAuth: [ ]
@@ -61,11 +342,53 @@ paths:
           $ref: '#/components/responses/ServerError'
   /api/v1/jsonld/{hash}:
     get:
-      tags: [ jsonld ]
-      summary: Retrieve a JSON-LD entry by ID
+      tags: [ JSON-LD Endpoints ]
+      summary: Retrieve a specific JSON-LD document by URL hash
       description: |
-        Returns the JSON-LD document for a previously crawled URL, identified by its MD5 (lowercase hex) of the URL.
-        Supports conditional GETs via `If-None-Match` and returns `304 Not Modified` when appropriate.
+        Retrieves a JSON-LD document for a specific URL using its MD5 hash as the identifier. This endpoint is useful for polling processing status or retrieving JSON-LD when you already know the hash.
+
+        ## URL Hash
+
+        The `hash` parameter is the MD5 hash of the **absolute URL** (lowercase hexadecimal):
+
+        ```javascript
+        import crypto from 'crypto';
+
+        const url = 'https://example.com/page';
+        const hash = crypto.createHash('md5').update(url).digest('hex');
+        // Result: "7c165c13f93d7ca168bcfbd73cf563e3"
+        ```
+
+        **Use cases:** Status polling after receiving 201 Created, or direct retrieval when you have the hash.
+
+        ## HTTP Caching Support
+
+        Supports ETag-based conditional requests. Send the `If-None-Match` header with your cached ETag to receive `304 Not Modified` when content hasn't changed. See **Cache Strategy** section for full implementation details.
+
+        ## Response Format
+
+        The response includes the JSON-LD document along with metadata:
+
+        ```json
+        {
+          "@context": "https://schema.org",
+          "@type": "Article",
+          "headline": "Example Article",
+          "status": "ready",
+          "etag": "a1b2c3d4e5f6",
+          ...
+        }
+        ```
+
+        ## Processing Status
+
+        The response includes a `status` field indicating the current processing state. See **Processing Model** section in the API overview for status definitions.
+
+        ## When to Use GET vs POST
+
+        - Use **POST /api/v1/jsonld**: For CMS integration, when you have the URL and want automatic creation/retrieval with optimal caching
+        - Use **GET /api/v1/jsonld/{hash}**: When you already have the hash and want to check status or retrieve by ID
+
       operationId: getJsonLdById
       security:
         - BearerAuth: [ ]
@@ -154,6 +477,20 @@ components:
       description: |
         A JSON-LD document (Schema.org format). May include any fields.
       additionalProperties: true
+
+    JsonLdStatus:
+      type: string
+      description: |
+        Processing status of a JSON-LD record.
+        - `created`: Initial status when record is created but processing hasn't started
+        - `updating`: Document is actively being processed by the AI crawler
+        - `failed`: JSON-LD generation failed (no valid JSON-LD could be generated)
+        - `ready`: Successfully generated JSON-LD document (has etag and content)
+      enum:
+        - created
+        - updating
+        - failed
+        - ready
 
     Problem:
       type: object
