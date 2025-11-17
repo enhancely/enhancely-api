@@ -13,6 +13,31 @@ info:
 
     The Enhancely API provides automatic generation and retrieval of Schema.org JSON-LD structured data for your web pages. This structured data helps search engines, AI platforms, and AI search tools better understand and represent your content.
 
+    ## Quick Start Guide
+
+    ### How It Works
+
+    <div style="text-align: center; margin: 20px 0;">
+      <img src="api-workflow-sequence.svg" alt="Enhancely API Workflow Sequence Diagram" style="max-width: 100%; height: auto;" />
+    </div>
+
+    ### Get Started in 3 Steps
+
+    **1. Get Your API Key** - Log in to the [Enhancely Dashboard](https://enhancely.ai), add your domain, verify ownership, and copy your API key.
+
+    **2. Make Your First Request** - POST your page URL to `/api/v1/jsonld` with your API key. First request returns 201 (queued for processing). Wait 1-3 minutes, then request again to get 200 with your generated JSON-LD.
+
+    **3. Integrate Into Your Website** - Add the returned JSON-LD in a `<script type="application/ld+json">` tag in your page's `<head>` section. Implement caching with ETags for production.
+
+    ### Key Benefits
+
+    - **Automatic Updates**: Nightly crawls detect content changes and regenerate JSON-LD
+    - **Efficient Caching**: ETag-based validation minimizes bandwidth and API calls
+    - **Always Fresh**: Your structured data stays synchronized with page content
+    - **Zero Maintenance**: No manual schema updates required
+
+    **Production Tip**: Implement caching with ETags (see Cache Strategy below) to minimize API calls and stay within rate limits.
+
     ## Prerequisites
 
     This API is exclusively available to Enhancely customers who have:
@@ -47,13 +72,10 @@ info:
     1. **Template Integration**: Add the API call in your page template's `<head>` section
     2. **URL Normalization**: Strip query parameters, hashes, and trailing slashes before caching
     3. **Cache-First Strategy**: Check local cache before making API requests (recommended TTL: 1 week)
-    4. **ETag Validation**: Always send `If-None-Match` header with cached ETag
-    5. **Silent Degradation**: Return empty output on errors to avoid breaking page rendering
-    6. **Cache Invalidation**: Clear cache when page content is updated
-
-    ### Bulk Operations
-
-    **Sitemap Indexation**: Automatic crawling of all URLs in your sitemap.xml is available through the Enhancely platform (not via API). This feature requires appropriate access rights and is ideal for initial setup or when adding many pages at once.
+    4. **Cache Key Generation**: Use MD5 hash of the normalized URL as the cache key
+    5. **ETag Validation**: Always send `If-None-Match` header with cached ETag
+    6. **Silent Degradation**: Return empty output on errors to avoid breaking page rendering
+    7. **Cache Invalidation**: Clear cache when page content is updated (e.g., via CMS hooks)
 
     **Nightly Updates**: Enhancely automatically checks all indexed URLs nightly to detect content changes and regenerate JSON-LD when needed, keeping your structured data fresh without manual intervention.
 
@@ -110,36 +132,9 @@ info:
 
     ### Content Change Detection
 
-    Internally, Enhancely tracks HTML content changes by hashing the page content. When a URL is re-crawled:
+    When HTML content changes, Enhancely reprocesses the JSON-LD and generates a new ETag.
 
-    1. The page HTML is fetched and hashed
-    2. If the hash matches the previous crawl, JSON-LD generation is skipped
-    3. Only the `crawledAt` timestamp is updated
-    4. The existing ETag remains valid
-
-    This means:
-    - ETags only change when actual content changes occur
-    - Minor HTML changes (like navigation updates) don't trigger regeneration if the core content is unchanged
-    - Your cached JSON-LD remains valid longer, reducing API calls
-
-    ### Implementation Best Practices
-
-    **Cache Key Generation:**
-    - Use MD5 hash of the normalized URL as the cache key
-    - Normalize URLs consistently: remove query params, hashes, and trailing slashes
-    - Store both ETag and JSON-LD data separately
-
-    **Cache Duration:**
-    - **Recommended TTL**: 1 week (604,800 seconds)
-    - Longer TTLs reduce API load since Enhancely automatically updates content nightly
-    - ETags remain valid across nightly updates if content hasn't changed
-
-    **Cache Invalidation:**
-    - Clear cache when page content is updated (e.g., via CMS hooks)
-    - Optional: Clear cache in local/development environments for testing
-    - Prevent page-level caching when API errors occur
-
-    **Recommended Flow:**
+    ### Recommended Flow:
     1. Check local cache for ETag and JSON-LD data
     2. Make POST request with `If-None-Match` header containing cached ETag
     3. Handle 412 response by returning cached data (ETag still valid)
@@ -189,83 +184,60 @@ info:
 
     ### Best Practices for Rate Limit Management
 
-    **1. Implement Aggressive Caching**
-
-    The most effective rate limit strategy is to **avoid making API calls** through proper caching:
-
-    - Cache responses with a 1-week TTL minimum
-    - Always send `If-None-Match` headers with cached ETags
-    - 412 responses use minimal bandwidth and help avoid rate limits
-    - Only make new requests when cache is cold or content changes
-
-    **2. Monitor Rate Limit Headers**
+    **1. Monitor Rate Limit Headers**
 
     Check `RateLimit-Remaining` and `RateLimit-Reset` headers to track usage and implement proactive backoff when limits are approaching.
 
-    **3. Implement Retry Logic**
+    **2. Implement Retry Logic**
 
     For 429 responses, wait until the `RateLimit-Reset` timestamp before retrying. For 5xx server errors, use exponential backoff (e.g., 1s, 2s, 4s).
 
-    **4. Use Silent Degradation**
+    **3. Use Silent Degradation**
 
     When rate limited or encountering errors, return cached data or empty output rather than breaking page rendering.
 
     ## Error Handling
 
-    Proper error handling ensures your integration degrades gracefully when issues occur. The API uses standard HTTP status codes and RFC 7807 Problem Details format.
+    The API uses standard HTTP status codes and RFC 7807 Problem Details format for errors.
 
-    ### HTTP Status Codes
+    ### Key Status Codes
 
-    | Status | Meaning | Action |
-    |--------|---------|--------|
-    | **200 OK** | JSON-LD ready and returned | Cache and render |
-    | **201 Created** | URL queued for first-time processing | Wait/poll, return empty or cached |
-    | **202 Accepted** | Processing in progress | Wait/poll, return empty or cached |
-    | **304 Not Modified** | GET with ETag - content unchanged | Use cached data |
-    | **400 Bad Request** | Invalid URL or malformed request | Log error, return empty |
-    | **401 Unauthorized** | Missing/invalid API key | Check API key configuration |
-    | **404 Not Found** | Resource doesn't exist | Log error, return empty |
-    | **412 Precondition Failed** | POST with ETag - content unchanged | Use cached data |
-    | **415 Unsupported Media Type** | Wrong Content-Type header | Set `Content-Type: application/json` |
-    | **429 Too Many Requests** | Rate limit exceeded | Wait for `RateLimit-Reset`, use cached data |
-    | **500 Server Error** | Internal server error | Retry with backoff, use cached data |
-    | **502 Bad Gateway** | Upstream service error | Retry with backoff, use cached data |
-    | **503 Service Unavailable** | Service temporarily down | Retry with backoff, use cached data |
+    **Success States:**
+    - **200 OK** - JSON-LD ready and returned
+    - **201 Created** - URL queued for first-time processing
+    - **202 Accepted** - Processing in progress
+
+    **Cache States:**
+    - **304 Not Modified** (GET) / **412 Precondition Failed** (POST) - Use cached data
+
+    **Client Errors (4xx):**
+    - **400** - Invalid URL or malformed request
+    - **401** - Missing/invalid API key
+    - **404** - Resource doesn't exist
+    - **415** - Wrong Content-Type header
+    - **429** - Rate limit exceeded
+
+    **Server Errors (5xx):**
+    - **500/502/503** - Retry with exponential backoff, use cached data
 
     ### Error Response Format
-
-    All error responses follow RFC 7807 Problem Details format:
 
     ```json
     {
       "type": "https://enhancely.ai/problems/rate-limit-exceeded",
       "title": "Rate Limit Exceeded",
       "status": 429,
-      "detail": "You have exceeded your rate limit. Please try again later.",
-      "instance": "/api/v1/jsonld"
+      "detail": "You have exceeded your rate limit. Please try again later."
     }
     ```
 
     ### Best Practices
 
-    **Silent Degradation (Recommended)**
-    - Return cached data or empty output when errors occur
-    - Never break page rendering due to API errors
-    - Log errors in debug/development mode with HTML comments
-    - Use monitoring systems in production (Sentry, New Relic, etc.)
-
-    **Response Handling:**
-    - ✅ Cache only successful 200 responses with ETag
-    - ✅ Return cached data for 412 (ETag matches)
-    - ✅ Return empty or cached data for 201/202 (processing) - first-time requests return empty until ready
-    - ✅ Return cached data on 5xx errors, retry with exponential backoff
-    - ✅ Log and return empty on 400/401/404 - don't retry client errors
-    - ✅ Wait for `RateLimit-Reset` on 429, return cached data
-
-    **Cache Management:**
-    - Prevent page-level caching when API errors occur (use cache-control headers or framework-specific mechanisms)
-    - Clear local cache only when page content is updated
-    - Skip API calls entirely on error pages (404, 500)
+    - **Silent Degradation**: Return cached data or empty output on errors—never break page rendering
+    - **Cache on Success**: Only cache 200 responses with ETag
+    - **Use Cache on Errors**: Return cached data for 412, 5xx, and 429 responses
+    - **Don't Retry Client Errors**: Log and return empty for 400/401/404
+    - **Monitor in Production**: Use tools like Sentry or New Relic
 
 servers:
   - url: https://enhancely.ai
@@ -379,57 +351,22 @@ paths:
       tags: [ JSON-LD Endpoints ]
       summary: Generate or retrieve JSON-LD for a URL (Primary Integration Endpoint)
       description: |
-        **This is the recommended endpoint for CMS plugins and website integrations.**
+        **Recommended endpoint for CMS plugins and website integrations.**
 
-        Submits a URL for JSON-LD generation or retrieves existing JSON-LD if already processed. This endpoint is designed for optimal performance with HTTP caching using ETags.
-
-        ## How It Works
-
-        JSON-LD generation is **asynchronous**. See the **Processing Model** section in the API overview for complete details on status values and lifecycle.
+        Submits a URL for JSON-LD generation or retrieves existing data if already processed. Automatically creates new records if they don't exist.
 
         **Response Codes:**
-        - **201 Created**: New URL queued for first-time processing
-        - **202 Accepted**: URL is being processed (processing in progress)
-        - **200 OK**: URL already exists (check `status` field for current state)
-        - **412 Precondition Failed**: ETag provided matches current version (cache still valid)
+        - **200 OK** - JSON-LD exists (check `status`: `ready`, `updating`, or `failed`)
+        - **201 Created** - URL queued for first-time processing (poll GET /{hash} for completion)
+        - **202 Accepted** - Currently being processed (poll GET /{hash} for completion)
+        - **412 Precondition Failed** - ETag matches, use cached data (no body returned)
 
-        **Status Values:** `created` → `updating` → `ready` or `failed`
+        **Key Features:**
+        - Asynchronous processing (1-3 minutes for new URLs)
+        - ETag-based conditional requests for efficient caching
+        - Automatic nightly updates when content changes
+        - Supports complex URLs in request body (no query string limits)
 
-        ### Subsequent Requests (With Cache)
-
-        On subsequent requests, include the `If-None-Match` header with your cached ETag:
-
-        ```http
-        POST /api/v1/jsonld
-        Authorization: Bearer YOUR_API_KEY
-        Content-Type: application/json
-        If-None-Match: "a1b2c3d4e5f6"
-
-        {"url": "https://example.com/page"}
-        ```
-
-        **Response:**
-        - **412 Precondition Failed**: ETag matches current version (cache still valid, no body returned)
-        - **200 OK**: Content has changed or no etag match, fresh JSON-LD returned with new ETag
-
-        ## HTTP Caching with ETags
-
-        This endpoint supports standard HTTP conditional requests using ETags for efficient caching. For complete details, see the **Cache Strategy** section in the API overview above.
-
-        **Quick Reference:**
-        - Include `If-None-Match: "etag-value"` header to check for changes
-        - Response `412 Precondition Failed` = etag matches, use your cached version (no body)
-        - Response `200 OK` = new content available with updated ETag
-
-        ## Best Practices for Integration
-
-        1. **Always cache both ETag and JSON-LD** after receiving a 200/201 response
-        2. **Always send If-None-Match** with the cached ETag on subsequent requests
-        3. **Handle 412 responses** by using your cached JSON-LD (no new data in body)
-        4. **Handle 201/202 responses** for new URLs by polling until status is `ready`
-        5. **Respect rate limits** shown in `RateLimit-*` headers
-
-        After a successful crawl, Enhancely automatically re-checks URLs nightly to detect content changes. If changes are detected, the JSON-LD is regenerated and a new ETag is issued.
 
 
       operationId: postJsonLd
@@ -481,73 +418,27 @@ paths:
       tags: [ JSON-LD Endpoints ]
       summary: Retrieve a specific JSON-LD document by URL hash
       description: |
-        Retrieves a JSON-LD document for a specific URL using its MD5 hash as the identifier. This endpoint is useful for polling processing status or retrieving JSON-LD when you already know the hash.
+        Retrieves JSON-LD for a URL using its MD5 hash. Primarily used for polling processing status after POST returns 201/202.
 
-        ## URL Hash
+        **Primary use cases:**
+        - Polling processing status after POST returns 201/202
+        - Direct retrieval when you have the MD5 hash
+        - ETag-based caching (returns 304 when content unchanged)
 
-        The `hash` parameter is the MD5 hash of the **absolute URL** (lowercase hexadecimal):
+        **URL Hash Calculation:**
+
+        The `hash` parameter is the MD5 hash of the absolute URL (lowercase hexadecimal):
 
         ```javascript
         import crypto from 'crypto';
-
-        const url = 'https://example.com/page';
-        const hash = crypto.createHash('md5').update(url).digest('hex');
+        const hash = crypto.createHash('md5').update('https://example.com/page').digest('hex');
         // Result: "7c165c13f93d7ca168bcfbd73cf563e3"
         ```
 
-        **Use cases:** Status polling after receiving 201 Created, or direct retrieval when you have the hash.
-
-        ## HTTP Caching Support
-
-        Supports ETag-based conditional requests. Send the `If-None-Match` header with your cached ETag to receive `304 Not Modified` when content hasn't changed. See **Cache Strategy** section for full implementation details.
-
-        ## Response Format
-
-        The response includes the JSON-LD document along with metadata:
-
-        ```json
-        {
-          "@context": "https://schema.org",
-          "@type": "Article",
-          "headline": "Example Article",
-          "status": "ready",
-          "etag": "a1b2c3d4e5f6",
-          ...
-        }
-        ```
-
-        ## Processing Status
-
-        The response includes a `status` field indicating the current processing state. See **Processing Model** section in the API overview for status definitions.
-
-        ## When to Use GET vs POST
-
-        **Use POST /api/v1/jsonld (Recommended for Integration):**
-        - ✅ CMS plugins and website integrations
-        - ✅ When you have the page URL (not the hash)
-        - ✅ When you want automatic creation if URL doesn't exist
-        - ✅ For ETag-based caching with `If-None-Match` header (returns 412)
-        - ✅ When sending complex URLs that may exceed query string limits
-        - ✅ First-time requests that need async processing (201/202 status)
-
-        **Use GET /api/v1/jsonld/{hash}:**
-        - ✅ When you already have the MD5 hash of the URL
-        - ✅ Polling for processing status after receiving 201/202 from POST
-        - ✅ Direct retrieval when hash is known
-        - ✅ For ETag-based caching with `If-None-Match` header (returns 304)
-        - ✅ Monitoring and administrative tasks
-
-        **Use GET /api/v1/jsonld (list endpoint):**
-        - ✅ Auditing all JSON-LD records for your domain
-        - ✅ Bulk status checking with filters
-        - ✅ Monitoring and troubleshooting
-        - ✅ Building internal dashboards
-
-        **Key Differences:**
-        - POST creates new records (201) if they don't exist; GET returns 404
-        - POST with `If-None-Match` returns 412; GET with `If-None-Match` returns 304
-        - POST sends URL in request body; GET sends hash in URL path
-        - Both support ETag-based conditional requests for efficient caching
+        **Response Codes:**
+        - **200 OK** - JSON-LD returned with metadata (includes `status` field)
+        - **304 Not Modified** - Content unchanged (when `If-None-Match` header matches ETag)
+        - **404 Not Found** - Hash doesn't exist (use POST to create)
 
       operationId: getJsonLdById
       security:
@@ -769,8 +660,6 @@ components:
     CreatedJsonLd:
       description: |
         Record created and the crawler is now processing the requested resource.
-        Returns a Problem response indicating processing has started.
-        Poll this endpoint to check when processing completes.
       content:
         application/json:
           schema:
@@ -784,8 +673,6 @@ components:
     AcceptedJsonLd:
       description: |
         The crawler is still processing the requested resource.
-        Returns a Problem response indicating processing is ongoing.
-        Poll this endpoint to check when processing completes.
       content:
         application/json:
           schema:

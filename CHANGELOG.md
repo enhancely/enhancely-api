@@ -1,5 +1,32 @@
 # Changelog
 
+## [1.0.3] – 2025-11-17
+
+### Documentation
+
+#### Added
+- Quick Start Guide section with "How It Works" visual diagram
+- "Get Started in 3 Steps" quick onboarding section
+- Key Benefits overview (Automatic Updates, Efficient Caching, Always Fresh, Zero Maintenance)
+- Workflow sequence diagram (`api-workflow-sequence.svg`) embedded in documentation
+- Production tip about implementing caching with ETags
+- Cache Key Generation step to CMS integration checklist
+
+#### Changed
+- Simplified "Content Change Detection" from detailed internal implementation to single clear statement
+- Reorganized HTTP Status Codes from table format to grouped categories (Success States, Cache States, Client Errors, Server Errors)
+- Consolidated "Implementation Best Practices" into "CMS Plugins & Website Integration" section
+- Streamlined Error Handling best practices from detailed checklist to 5 concise bullet points
+- Simplified Rate Limit Management best practices (removed duplicate caching guidance)
+
+#### Removed
+- "Bulk Operations" section (non-API feature)
+- Detailed internal content change detection explanation
+- Separate "Implementation Best Practices" section (consolidated into CMS integration)
+- Redundant caching guidance from Rate Limiting section
+- Verbose response handling checklist
+- Circular back-references to Overview sections in endpoint descriptions
+
 ## [1.0.2] – 2025-01-17
 
 ### Documentation Enhancements
