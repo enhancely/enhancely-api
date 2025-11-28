@@ -3,24 +3,341 @@ jsonSchemaDialect: https://spec.openapis.org/oas/3.1/dialect/base
 info:
   title: Enhancely API
   version: "1.0.0"
+  x-logo:
+    url: enhancely-logo.png
+    altText: Enhancely Logo
+    backgroundColor: "#FFFFFF"
+    href: https://enhancely.ai
+  description: |
+    ## Overview
+
+    The Enhancely API provides automatic generation and retrieval of Schema.org JSON-LD structured data for your web pages. This structured data helps search engines, AI platforms, and AI search tools better understand and represent your content.
+
+    ## Quick Start Guide
+
+    ### How It Works
+
+    <div style="text-align: center; margin: 20px 0;">
+      <img src="api-workflow-sequence.svg" alt="Enhancely API Workflow Sequence Diagram" style="max-width: 100%; height: auto;" />
+    </div>
+
+    ### Get Started in 3 Steps
+
+    **1. Get Your API Key** - Log in to the [Enhancely Dashboard](https://enhancely.ai), add your domain, verify ownership, and copy your API key.
+
+    **2. Make Your First Request** - POST your page URL to `/api/v1/jsonld` with your API key. First request returns 201 (queued for processing). Wait a few minutes, then request again to get 200 with your generated JSON-LD.
+
+    **3. Integrate Into Your Website** - Add the returned JSON-LD in a `<script type="application/ld+json">` tag in your page's `<head>` section. Implement caching with ETags for production.
+
+    ### Key Benefits
+
+    - **Automatic Updates**: Nightly crawls detect content changes and regenerate JSON-LD
+    - **Efficient Caching**: ETag-based validation minimizes bandwidth and API calls
+    - **Always Fresh**: Your structured data stays synchronized with page content
+    - **Minimal Maintenance**: Automatic nightly updates with manual cache clearing only when you update content
+
+
+    ## Prerequisites
+
+    This API is exclusively available to Enhancely customers who have:
+    1. Added their domain to the Enhancely platform
+    2. Validated domain ownership
+    3. Retrieved their domain-specific API key
+
+    ## Integration Approaches
+
+    ### POST vs GET: Which Endpoint to Use
+
+    **Use POST /api/v1/jsonld for CMS & Website Integration:**
+    - Primary endpoint for page-level integration
+    - Automatically creates records if they don't exist
+    - Supports sending complex URLs in request body (no query string length limits)
+    - Returns `412 Precondition Failed` when ETag matches (cache valid)
+    - Ideal for server-side rendering in templates
+
+    **Use GET /api/v1/jsonld/{hash} for:**
+    - Polling processing status after receiving 201/202 from POST
+    - Direct retrieval when you already have the MD5 hash
+    - Returns `304 Not Modified` when ETag matches (cache valid)
+
+    **Use GET /api/v1/jsonld for:**
+    - Listing all JSON-LD records for your domain
+    - Monitoring and troubleshooting with filters
+
+    ### CMS Plugins & Website Integration (Recommended)
+
+    For integrating Enhancely into your website or CMS, follow this pattern:
+
+    1. **Template Integration**: Add the API call in your page template's `<head>` section
+    2. **URL Normalization**: Strip query parameters, hashes, and trailing slashes before caching
+    3. **Cache-First Strategy**: Check local cache before making API requests (recommended TTL: 1 week)
+    4. **Cache Key Generation**: Use MD5 hash of the normalized URL as the cache key
+    5. **ETag Validation**: Always send `If-None-Match` header with cached ETag
+    6. **Silent Degradation**: Return empty output on errors to avoid breaking page rendering
+    7. **Cache Invalidation**: Clear local cache when you manually update page content via CMS (use CMS hooks like `page.update:before`). Auto-clear cache in local/development environments for testing.
+
+    **Note**: Enhancely automatically checks all indexed URLs nightly. Normal content changes are detected via ETag validation on your next API call—manual cache clearing is only needed when you actively update content through your CMS.
+
+    ## Cache Strategy
+
+    Enhancely uses HTTP ETag-based caching:
+
+    ### HTTP-Level Caching (ETags)
+
+    Every JSON-LD response includes an `ETag` header—a unique identifier for that version of the content. Use ETags for efficient caching:
+
+    ```http
+    # First request
+    POST /api/v1/jsonld
+    Authorization: Bearer YOUR_API_KEY
+    Content-Type: application/json
+    Accept: application/json
+
+    {"url": "https://example.com/page"}
+
+    HTTP/1.1 200 OK
+    ETag: "a1b2c3d4e5f6"
+    Content-Type: application/json
+
+    {
+      "hash": "7c165c13f93d7ca168bcfbd73cf563e3",
+      "url": "https://example.com/page",
+      "jsonld": {...},
+      "metadata": {},
+      "etag": "a1b2c3d4e5f6",
+      "crawled_at": "2025-01-16T14:30:00Z",
+      "status": "ready"
+    }
+    ```
+
+    ```http
+    # Subsequent request with cached ETag
+    POST /api/v1/jsonld
+    Authorization: Bearer YOUR_API_KEY
+    Content-Type: application/json
+    Accept: application/json
+    If-None-Match: "a1b2c3d4e5f6"
+
+    {"url": "https://example.com/page"}
+
+    HTTP/1.1 412 Precondition Failed
+    ```
+
+    **Benefits:**
+    - `412 Precondition Failed` responses include minimal Problem body indicating cache is valid
+    - Avoids redundant processing when content hasn't changed
+    - Standard HTTP caching mechanism supported by all HTTP clients
+    - Learn more: [MDN: HTTP Conditional Requests](https://developer.mozilla.org/en-US/docs/Web/HTTP/Conditional_requests)
+
+    ### Content Change Detection
+
+    When HTML content changes, Enhancely reprocesses the JSON-LD and generates a new ETag.
+
+    ### Recommended Flow:
+    1. Check local cache for ETag and JSON-LD data
+    2. Make POST request with `If-None-Match` header containing cached ETag
+    3. Handle 412 response by returning cached data (ETag still valid)
+    4. Handle 200 response by caching new ETag and JSON-LD with 1-week TTL
+    5. Handle errors by returning cached data or empty output (silent degradation)
+
+    ## Processing Model
+
+    JSON-LD generation is **asynchronous**. When you submit a URL:
+
+    1. **201 Created**: The URL is queued for processing (first time submission)
+    2. **202 Accepted**: The URL exists but is currently being processed
+    3. **200 OK**: The JSON-LD already exists and is available (with current status)
+
+    Processing typically takes 1-3 minutes depending on page complexity and queue depth. The response includes a `status` field:
+
+    - `created`: Queued for processing, JSON-LD generation hasn't started yet (typically returns 201 on first POST)
+    - `updating`: Currently being processed (returns 202 when still processing)
+    - `ready`: JSON-LD is available and ready to use (returns 200 with full content)
+    - `failed`: Generation failed (e.g., invalid page, unreachable URL)
+
+    For newly created records or records being processed (201/202 responses), poll the **GET /api/v1/jsonld/{hash}** endpoint to check when processing completes and the status becomes `ready`.
+
+    ## Rate Limiting
+
+    All endpoints are rate-limited per domain. Each response includes rate limit headers to help you track your usage.
+
+    ### Rate Limit Headers
+
+    ```http
+    RateLimit-Limit: 100        # Maximum requests allowed in the current window
+    RateLimit-Remaining: 75     # Requests remaining in the current window
+    RateLimit-Reset: 1640000000 # Unix timestamp when the limit resets
+    ```
+
+    ### Handling Rate Limits
+
+    **429 Too Many Requests Response:**
+    ```json
+    {
+      "type": "https://enhancely.ai/problems/rate-limit-exceeded",
+      "title": "Rate Limit Exceeded",
+      "status": 429,
+      "detail": "You have exceeded your rate limit. Please try again later."
+    }
+    ```
+
+    ### Best Practices for Rate Limit Management
+
+    **1. Monitor Rate Limit Headers**
+
+    Check `RateLimit-Remaining` and `RateLimit-Reset` headers to track usage and implement proactive backoff when limits are approaching.
+
+    **2. Implement Retry Logic**
+
+    For 429 responses, wait until the `RateLimit-Reset` timestamp before retrying. For 5xx server errors, use exponential backoff (e.g., 1s, 2s, 4s).
+
+    **3. Use Silent Degradation**
+
+    When rate limited or encountering errors, return cached data or empty output rather than breaking page rendering.
+
+    ## Error Handling
+
+    The API uses standard HTTP status codes and RFC 7807 Problem Details format for errors.
+
+    ### Key Status Codes
+
+    **Success States:**
+    - **200 OK** - JSON-LD ready and returned
+    - **201 Created** - URL queued for first-time processing
+    - **202 Accepted** - Processing in progress
+
+    **Cache States:**
+    - **304 Not Modified** (GET) / **412 Precondition Failed** (POST) - Use cached data
+
+    **Client Errors (4xx):**
+    - **400** - Invalid URL or malformed request
+    - **401** - Missing/invalid API key
+    - **404** - Resource doesn't exist
+    - **415** - Wrong Content-Type header
+    - **429** - Rate limit exceeded
+
+    **Server Errors (5xx):**
+    - **500/502/503** - Retry with exponential backoff, use cached data
+
+    ### Error Response Format
+
+    ```json
+    {
+      "type": "https://enhancely.ai/problems/rate-limit-exceeded",
+      "title": "Rate Limit Exceeded",
+      "status": 429,
+      "detail": "You have exceeded your rate limit. Please try again later."
+    }
+    ```
+
+    ### Best Practices
+
+    - **Silent Degradation**: Return cached data or empty output on errors—never break page rendering
+    - **Cache on Success**: Only cache 200 responses with ETag
+    - **Use Cache on 412/5xx/429**: Return cached data when receiving these status codes
+    - **Don't Retry Client Errors**: Log and return empty for 400/401/404
+    - **Monitor in Production**: Use tools like Sentry or New Relic
+
 servers:
   - url: https://app.enhancely.ai
     description: API V1
 tags:
-  - name: jsonld
-    description: Endpoints dealing with JSON-LD generation and retrieval.
+  - name: JSON-LD Endpoints
+    description: |
+      Endpoints for generating and retrieving Schema.org JSON-LD structured data from web page URLs.
+
+      These endpoints enable automatic creation of rich structured data that helps search engines, AI platforms, and AI search tools better understand and represent your content.
+x-tagGroups:
+  - name: Enhancely API
+    tags:
+      - JSON-LD Endpoints
 
 paths:
   /api/v1/jsonld:
     get:
-      tags: [ jsonld ]
-      summary: Retrieve the list of JSON-LD URLs
+      tags: [ JSON-LD Endpoints ]
+      summary: List all JSON-LD records for your domain
+      description: |
+        Retrieves a list of all JSON-LD records associated with your domain, providing an overview of indexed URLs and their processing status.
+
+        **Primary use cases:** Monitoring, troubleshooting, and auditing. For website integration, use the POST endpoint instead.
+
+        **Filtering:** Supports filtering by `status`, `hash`, `etag`, `url`, and timestamps (`created_at`, `updated_at`, `crawled_at`).
       operationId: getJsonLdList
       security:
         - BearerAuth: []
+      parameters:
+        - in: query
+          name: etag
+          required: false
+          description: |
+            Filter by ETag value. Use `*` to match any record with an ETag, or provide a specific ETag value.
+          schema:
+            type: string
+          example: "a1b2c3d4e5f6"
+        - in: query
+          name: hash
+          required: false
+          description: |
+            Filter by MD5 hash of the URL. See GET /api/v1/jsonld/{hash} endpoint for hash calculation details.
+          schema:
+            type: string
+            pattern: '^[a-f0-9]{32}$'
+          example: "7c165c13f93d7ca168bcfbd73cf563e3"
+        - in: query
+          name: url
+          required: false
+          description: |
+            Filter by the source URL.
+          schema:
+            type: string
+            format: uri
+          example: "https://example.com/page"
+        - in: query
+          name: id
+          required: false
+          description: |
+            Filter by JSON-LD @id field.
+          schema:
+            type: string
+        - in: query
+          name: status
+          required: false
+          description: |
+            Filter by processing status.
+          schema:
+            $ref: '#/components/schemas/JsonLdStatus'
+          example: "ready"
+        - in: query
+          name: created_at
+          required: false
+          description: |
+            Filter records created after this timestamp.
+          schema:
+            type: string
+            format: date-time
+          example: "2025-01-01T00:00:00Z"
+        - in: query
+          name: updated_at
+          required: false
+          description: |
+            Filter records updated after this timestamp.
+          schema:
+            type: string
+            format: date-time
+          example: "2025-01-01T00:00:00Z"
+        - in: query
+          name: crawled_at
+          required: false
+          description: |
+            Filter records crawled after this timestamp.
+          schema:
+            type: string
+            format: date-time
+          example: "2025-01-01T00:00:00Z"
       responses:
         '200':
-          $ref: '#/components/responses/OkJsonLd'
+          $ref: '#/components/responses/OkJsonLdList'
         '400':
           $ref: '#/components/responses/BadRequest'
         '401':
@@ -30,21 +347,56 @@ paths:
         '500':
           $ref: '#/components/responses/ServerError'
     post:
-      tags: [ jsonld ]
-      summary: Create and retrieve JSON-LD for a page
+      tags: [ JSON-LD Endpoints ]
+      summary: Generate or retrieve JSON-LD for a URL (Primary Integration Endpoint)
       description: |
-        Accept a page URL and return JSON-LD.
-        - **201**: new JSON-LD was created (didn't exist before).
-        - **200**: existing JSON-LD returned.
-        - **415** returned if `Content-Type` is not supported.
+        **Recommended endpoint for CMS plugins and website integrations.**
+
+        Submits a URL for JSON-LD generation or retrieves existing data if already processed. Automatically creates new records if they don't exist.
+
+        **Response Codes:**
+        - **200 OK** - JSON-LD exists (check `status`: `ready`, `updating`, or `failed`)
+        - **201 Created** - URL queued for first-time processing (poll GET /{hash} for completion)
+        - **202 Accepted** - Currently being processed (poll GET /{hash} for completion)
+        - **412 Precondition Failed** - ETag matches, use cached data
+
+        **Key Features:**
+        - Asynchronous processing (typically a few minutes for new URLs)
+        - ETag-based conditional requests for efficient caching
+        - Supports complex URLs in request body (no query string limits)
+
+
+
       operationId: postJsonLd
       security:
         - BearerAuth: [ ]
+      parameters:
+        - in: header
+          name: If-None-Match
+          required: false
+          description: |
+            Optional. The ETag value from a previous response. If provided and matches the current ETag, returns `412 Precondition Failed`.
+          schema:
+            type: string
+          example: "a1b2c3d4e5f6"
+        - in: header
+          name: Accept
+          required: false
+          description: |
+            Optional. Specify `application/ld+json` to receive only the JSON-LD content without wrapper metadata. Defaults to `application/json` which includes metadata fields (status, etag, hash, etc.).
+          schema:
+            type: string
+            enum:
+              - application/json
+              - application/ld+json
+          example: "application/json"
       requestBody:
         $ref: '#/components/requestBodies/JsonLdRequestBody'
       responses:
         '201':
           $ref: '#/components/responses/CreatedJsonLd'
+        '202':
+          $ref: '#/components/responses/AcceptedJsonLd'
         '200':
           $ref: '#/components/responses/OkJsonLd'
         '400':
@@ -61,11 +413,31 @@ paths:
           $ref: '#/components/responses/ServerError'
   /api/v1/jsonld/{hash}:
     get:
-      tags: [ jsonld ]
-      summary: Retrieve a JSON-LD entry by ID
+      tags: [ JSON-LD Endpoints ]
+      summary: Retrieve a specific JSON-LD document by URL hash
       description: |
-        Returns the JSON-LD document for a previously crawled URL, identified by its MD5 (lowercase hex) of the URL.
-        Supports conditional GETs via `If-None-Match` and returns `304 Not Modified` when appropriate.
+        Retrieves JSON-LD for a URL using its MD5 hash. Primarily used for polling processing status after POST returns 201/202.
+
+        **Primary use cases:**
+        - Polling processing status after POST returns 201/202
+        - Direct retrieval when you have the MD5 hash
+        - ETag-based caching (returns 304 when content unchanged)
+
+        **URL Hash Calculation:**
+
+        The `hash` parameter is the MD5 hash of the absolute URL (lowercase hexadecimal):
+
+        ```javascript
+        import crypto from 'crypto';
+        const hash = crypto.createHash('md5').update('https://example.com/page').digest('hex');
+        // Result: "7c165c13f93d7ca168bcfbd73cf563e3"
+        ```
+
+        **Response Codes:**
+        - **200 OK** - JSON-LD returned with metadata (includes `status` field)
+        - **304 Not Modified** - Content unchanged (when `If-None-Match` header matches ETag)
+        - **404 Not Found** - Hash doesn't exist (use POST to create)
+
       operationId: getJsonLdById
       security:
         - BearerAuth: [ ]
@@ -83,9 +455,21 @@ paths:
           name: If-None-Match
           required: false
           description: |
-            Conditional request. Return `304 Not Modified` if the supplied ETag matches the current resource ETag.
+            Optional. Return `304 Not Modified` if the supplied ETag matches the current resource ETag.
           schema:
             type: string
+          example: "a1b2c3d4e5f6"
+        - in: header
+          name: Accept
+          required: false
+          description: |
+            Optional. Specify `application/ld+json` to receive only the JSON-LD content without wrapper metadata. Defaults to `application/json` which includes metadata fields (status, etag, hash, etc.).
+          schema:
+            type: string
+            enum:
+              - application/json
+              - application/ld+json
+          example: "application/json"
       responses:
         '200':
           $ref: '#/components/responses/OkJsonLd'
@@ -107,7 +491,7 @@ components:
       type: http
       scheme: bearer
       description: |
-        Standard HTTP Bearer token in `Authorization` header.
+        **Required.** Standard HTTP Bearer token authentication. Include your API key in the `Authorization` header as `Bearer YOUR_API_KEY`.
 
   headers:
     RateLimit-Limit:
@@ -149,15 +533,87 @@ components:
             The target page URL to generate JSON-LD for.
             Example: `https://example.com/blog/automatic-jsonld-with-enhancely`.
 
+    JsonLdListItem:
+      type: object
+      description: |
+        A summary record of a JSON-LD document (without the actual JSON-LD content).
+      required:
+        - hash
+        - url
+        - etag
+        - crawled_at
+        - status
+      properties:
+        hash:
+          type: string
+          description: MD5 hash of the URL
+        url:
+          type: string
+          description: The source URL
+        etag:
+          type: string
+          nullable: true
+          description: ETag for caching (null when not yet crawled)
+        crawled_at:
+          type: string
+          format: date-time
+          nullable: true
+          description: When the URL was last crawled (null when not yet crawled)
+        status:
+          $ref: '#/components/schemas/JsonLdStatus'
+      example:
+        hash: "7c165c13f93d7ca168bcfbd73cf563e3"
+        url: "https://example.com/lecture-12"
+        etag: "a1b2c3d4e5f6"
+        crawled_at: "2025-01-16T14:30:00Z"
+        status: "ready"
+
     JsonLdDocument:
       type: object
       description: |
         A JSON-LD document (Schema.org format). May include any fields.
       additionalProperties: true
+      example:
+        "@context": "https://schema.org"
+        "@graph":
+          - "@type": "WebPage"
+            "@id": "https://example.com/lecture-12"
+            name: "Lecture 12: Graphs, networks, incidence matrices"
+            description: "These video lectures of Professor Gilbert Strang teaching 18.06 were recorded in Fall 1999 and do not correspond precisely to the current edition of the textbook."
+            publisher:
+              "@type": "CollegeOrUniversity"
+              name: "MIT OpenCourseWare"
+            license: "http://creativecommons.org/licenses/by-nc-sa/3.0/us/deed.en_US"
+        status: "ready"
+        etag: "a1b2c3d4e5f6"
+        hash: "7c165c13f93d7ca168bcfbd73cf563e3"
+        url: "https://example.com/lecture-12"
+        crawledAt: "2025-01-16T14:30:00Z"
+        createdAt: "2025-01-15T09:45:00Z"
+        updatedAt: "2025-01-16T14:30:00Z"
+
+    JsonLdStatus:
+      type: string
+      description: |
+        Processing status of a JSON-LD record.
+        - `created`: Initial status when record is created but processing hasn't started
+        - `updating`: Document is actively being processed by the AI crawler
+        - `failed`: JSON-LD generation failed (no valid JSON-LD could be generated)
+        - `ready`: Successfully generated JSON-LD document (has etag and content)
+      enum:
+        - created
+        - updating
+        - failed
+        - ready
 
     Problem:
       type: object
       description: Standard error object in RFC 7807 style.
+      required:
+        - type
+        - title
+        - status
+        - detail
       properties:
         type:
           type: string
@@ -174,15 +630,22 @@ components:
           description: Human-readable error details.
         instance:
           type: string
-          description: URI identifying this error occurrence.
+          description: Optional URI identifying this error occurrence.
         code:
           type: string
           description: Optional machine-readable error code.
       additionalProperties: true
+      example:
+        type: "https://enhancely.ai/problems/bad-request"
+        title: "Bad Request"
+        status: 400
+        detail: "Invalid JSON in request body"
 
   requestBodies:
     JsonLdRequestBody:
-      description: JSON body with the URL to generate JSON-LD for.
+      description: |
+        **Required.** JSON request body with the URL to generate JSON-LD for.
+        The `Content-Type` header must be `application/json`.
       required: true
       content:
         application/json:
@@ -193,17 +656,56 @@ components:
 
   responses:
     CreatedJsonLd:
-      description: JSON-LD generated; resource created for first time.
+      description: |
+        Record created and the crawler is now processing the requested resource.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: "https://enhancely.ai/problems/created-and-processing"
+            title: "Created and Processing"
+            status: 201
+            detail: "Record created and the crawler is now processing the requested resource. Please try again later."
+
+    AcceptedJsonLd:
+      description: |
+        The crawler is still processing the requested resource.
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: "https://enhancely.ai/problems/still-processing"
+            title: "Still Processing"
+            status: 202
+            detail: "The crawler is still processing the requested resource. Please try again later."
+
+    NotModified:
+      description: Not modified (ETag matched; no body returned).
       headers:
-        content:
-          application/ld+json:
-            schema: { $ref: '#/components/schemas/JsonLdDocument' }
-          application/json:
-            schema: { $ref: '#/components/schemas/JsonLdDocument' }
         ETag:
-          $ref: '#/components/headers/ETag'
-        Location:
-          $ref: '#/components/headers/Location'
+          description: Entity tag for conditional requests.
+          schema: { type: string }
+
+    NotFound:
+      description: Not found.
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+          example:
+            type: "https://enhancely.ai/problems/not-found"
+            title: "Not Found"
+            status: 404
+            detail: "The requested JSON-LD resource was not found"
+
+    OkJsonLdList:
+      description: List of JSON-LD records returned successfully.
+      headers:
+        X-Count:
+          description: Total number of records returned
+          schema:
+            type: integer
         RateLimit-Limit:
           $ref: '#/components/headers/RateLimit-Limit'
         RateLimit-Remaining:
@@ -211,32 +713,31 @@ components:
         RateLimit-Reset:
           $ref: '#/components/headers/RateLimit-Reset'
       content:
-        application/ld+json:
-          schema:
-            $ref: '#/components/schemas/JsonLdDocument'
         application/json:
           schema:
-            $ref: '#/components/schemas/JsonLdDocument'
-
-    NotModified:
-      description: Not modified (ETag matched; no body returned).
-
-    NotFound:
-      description: Not found.
-      content:
-        application/json:
-          schema: { $ref: '#/components/schemas/Problem' }
+            type: array
+            items:
+              $ref: '#/components/schemas/JsonLdListItem'
+          example:
+            - hash: "7c165c13f93d7ca168bcfbd73cf563e3"
+              url: "https://example.com/lecture-12"
+              etag: "a1b2c3d4e5f6"
+              crawled_at: "2025-01-16T14:30:00Z"
+              status: "ready"
+            - hash: "9d8c7b6a5e4f3d2c1b0a9e8d7c6b5a4f"
+              url: "https://example.com/lecture-13"
+              etag: "f6e5d4c3b2a1"
+              crawled_at: "2025-01-16T15:00:00Z"
+              status: "ready"
+            - hash: "1a2b3c4d5e6f7a8b9c0d1e2f3a4b5c6d"
+              url: "https://example.com/lecture-14"
+              etag: null
+              crawled_at: null
+              status: "created"
 
     OkJsonLd:
       description: JSON-LD returned; already existed or recently generated.
       headers:
-        content:
-          application/ld+json:
-            schema:
-              $ref: '#/components/schemas/JsonLdDocument'
-          application/json:
-            schema:
-              $ref: '#/components/schemas/JsonLdDocument'
         ETag:
           description: Entity tag for conditional requests.
           schema: { type: string }
@@ -246,6 +747,81 @@ components:
           $ref: '#/components/headers/RateLimit-Remaining'
         RateLimit-Reset:
           $ref: '#/components/headers/RateLimit-Reset'
+      content:
+        application/ld+json:
+          description: |
+            Returns only the JSON-LD content without wrapper metadata.
+            Use `Accept: application/ld+json` header to request this format.
+          schema:
+            type: object
+            additionalProperties: true
+          example:
+            "@context": "https://schema.org"
+            "@graph":
+              - "@type": "WebPage"
+                "@id": "https://example.com/lecture-12"
+                name: "Lecture 12: Graphs, networks, incidence matrices"
+                description: "These video lectures of Professor Gilbert Strang teaching 18.06 were recorded in Fall 1999 and do not correspond precisely to the current edition of the textbook."
+                publisher:
+                  "@type": "CollegeOrUniversity"
+                  name: "MIT OpenCourseWare"
+                license: "http://creativecommons.org/licenses/by-nc-sa/3.0/us/deed.en_US"
+        application/json:
+          description: |
+            Returns JSON-LD wrapped with metadata including hash, url, etag, status, and crawled_at.
+            This is the default format when no Accept header is specified.
+          schema:
+            type: object
+            required:
+              - hash
+              - url
+              - jsonld
+              - metadata
+              - etag
+              - crawled_at
+              - status
+            properties:
+              hash:
+                type: string
+                description: MD5 hash of the URL
+              url:
+                type: string
+                description: The source URL
+              jsonld:
+                type: object
+                additionalProperties: true
+                description: The JSON-LD structured data object
+              metadata:
+                type: object
+                additionalProperties: true
+                description: Additional metadata about the crawl
+              etag:
+                type: string
+                description: ETag for caching
+              crawled_at:
+                type: string
+                format: date-time
+                description: When the URL was last crawled
+              status:
+                $ref: '#/components/schemas/JsonLdStatus'
+          example:
+            hash: "7c165c13f93d7ca168bcfbd73cf563e3"
+            url: "https://example.com/lecture-12"
+            jsonld:
+              "@context": "https://schema.org"
+              "@graph":
+                - "@type": "WebPage"
+                  "@id": "https://example.com/lecture-12"
+                  name: "Lecture 12: Graphs, networks, incidence matrices"
+                  description: "These video lectures of Professor Gilbert Strang teaching 18.06 were recorded in Fall 1999 and do not correspond precisely to the current edition of the textbook."
+                  publisher:
+                    "@type": "CollegeOrUniversity"
+                    name: "MIT OpenCourseWare"
+                  license: "http://creativecommons.org/licenses/by-nc-sa/3.0/us/deed.en_US"
+            metadata: {}
+            etag: "a1b2c3d4e5f6"
+            crawled_at: "2025-01-16T14:30:00Z"
+            status: "ready"
 
     BadRequest:
       description: Malformed or invalid URL in request.
@@ -253,6 +829,11 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Problem'
+          example:
+            type: "https://enhancely.ai/problems/bad-request"
+            title: "Bad Request"
+            status: 400
+            detail: "Invalid JSON in request body"
 
     Unauthorized:
       description: Missing or invalid bearer token.
@@ -265,6 +846,11 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Problem'
+          example:
+            type: "https://enhancely.ai/problems/unauthorized"
+            title: "Unauthorized"
+            status: 401
+            detail: "Missing or invalid bearer token"
 
     PreconditionFailed:
       description: Precondition Failed.
@@ -272,6 +858,11 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Problem'
+          example:
+            type: "https://enhancely.ai/problems/precondition-failed"
+            title: "Precondition Failed"
+            status: 412
+            detail: "The precondition given in the request header fields evaluated to false"
 
     UnsupportedMediaType415:
       description: Content-Type not supported.
@@ -279,6 +870,11 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Problem'
+          example:
+            type: "https://enhancely.ai/problems/unsupported-media-type"
+            title: "Unsupported Media Type"
+            status: 415
+            detail: "Content-Type must be application/json"
 
     TooManyRequests:
       description: Rate limit exceeded.
@@ -293,6 +889,11 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Problem'
+          example:
+            type: "https://enhancely.ai/problems/rate-limit-exceeded"
+            title: "Rate Limit Exceeded"
+            status: 429
+            detail: "You have exceeded your rate limit. Please try again later."
 
     ServerError:
       description: Unexpected server error.
@@ -300,3 +901,8 @@ components:
         application/json:
           schema:
             $ref: '#/components/schemas/Problem'
+          example:
+            type: "https://enhancely.ai/problems/server-error"
+            title: "Internal Server Error"
+            status: 500
+            detail: "An unexpected server error occurred"

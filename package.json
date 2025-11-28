@@ -4,7 +4,7 @@
   "description": "Builds static API documentation using ReDoc (Community Edition)",
   "private": true,
   "scripts": {
-    "build-docs": "redocly build-docs openapi/openapi_v1.yaml --output docs/index.html"
+    "build-docs": "redocly build-docs openapi/openapi_v1.yaml --output docs/index.html --theme.openapi.expandSingleSchemaField=true --theme.openapi.jsonSampleExpandLevel=all"
   },
   "devDependencies": {
     "@redocly/cli": "^2.0.0"
