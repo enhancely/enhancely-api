@@ -4,7 +4,7 @@ info:
   title: Enhancely API
   version: "1.0.0"
 servers:
-  - url: https://enhancely.ai
+  - url: https://app.enhancely.ai
     description: API V1
 tags:
   - name: jsonld
