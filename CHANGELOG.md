@@ -1,5 +1,43 @@
 # Changelog
 
+## [1.1.0] – 2026-02-09
+
+### Breaking Changes
+
+#### Removed
+- **`GET /api/v1/jsonld` list endpoint** — This admin-only endpoint has been removed from the public API specification. Use `GET /api/v1/jsonld/{hash}` to retrieve individual records.
+- **`metadata` field** from all public response schemas — This field is reserved for internal/admin use and is no longer documented.
+- Unused OpenAPI component schemas: `JsonLdListItem`, `OkJsonLdList`, `JsonLdDocument`, `Location`, `ETag`
+
+### Enhancements
+
+#### Added
+- **`html` field** in POST `/api/v1/jsonld` request body — Optionally provide pre-fetched HTML to skip server-side crawling.
+- **`http_status_code`** response field — The HTTP status code from the most recent crawl (nullable).
+- **`readonly`** response field — Whether the record is read-only (nullable).
+- **`crawled_at`** response field — Timestamp of the most recent crawl (nullable).
+- **`ignored`** and **`generation_limit_reached`** values to the `JsonLdStatus` enum.
+- **`X-Redis-Cache`** response header (`HIT` or `MISS`) on `GET /api/v1/jsonld/{hash}`.
+- **`X-JsonLd-Status`** response header (set to `ignored` when applicable).
+- **`Cache-Control: no-cache`** request header support on `GET /api/v1/jsonld/{hash}` to bypass the Redis cache.
+- **403 Forbidden** response documentation for plan-limit and unvalidated-domain scenarios.
+- **429 Too Many Requests** response documentation for monthly generation limits (includes `Retry-After` header).
+- Request body examples: URL-only and URL-with-HTML variants.
+
+#### Changed
+- **Authentication terminology**: "domain-specific API key" → "project API key" throughout. The `BearerAuth` description now references the `sk-...` key format.
+- **Rate limiting scope**: Clarified that rate limits apply per organization (not per domain).
+- **`RateLimit-Reset` header**: Corrected from "UNIX timestamp" to "seconds remaining until reset".
+- **201 Created response body**: Updated to match actual implementation (`{status, message}` format instead of RFC 7807 Problem).
+- **Cache strategy example**: Updated to show `http_status_code`, `readonly`, and `crawled_at` in the response.
+- **Retry logic best practice**: Revised to reference correct 429 handling and exponential backoff.
+
+### Technical Improvements
+- Fixed OpenAPI 3.1 compliance: replaced `nullable: true` with union types (`['string', 'null']`, etc.).
+- Removed invalid `description` fields from response media type objects.
+- Cleaned up all orphaned component schemas after endpoint removal.
+- Specification passes `redocly lint` with zero errors.
+
 ## [1.0.3] – 2025-11-17
 
 ### Documentation
