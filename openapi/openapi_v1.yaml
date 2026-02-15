@@ -2,7 +2,7 @@ openapi: 3.1.0
 jsonSchemaDialect: https://spec.openapis.org/oas/3.1/dialect/base
 info:
   title: Enhancely API
-  version: "1.1.0"
+  version: "1.2.0"
   x-logo:
     url: enhancely-logo.png
     altText: Enhancely Logo
@@ -54,6 +54,11 @@ info:
     - Supports sending complex URLs in request body (no query string length limits)
     - Returns `412 Precondition Failed` when ETag matches (cache valid)
     - Ideal for server-side rendering in templates
+
+    **Use GET /api/v1/jsonld for:**
+    - Listing all JSON-LD records across your project
+    - Filtering by status, URL, hash, ETag, readonly, or timestamps
+    - Paginated results with cursor-based navigation
 
     **Use GET /api/v1/jsonld/{hash} for:**
     - Polling processing status after receiving 201/202 from POST
@@ -252,6 +257,153 @@ x-tagGroups:
 
 paths:
   /api/v1/jsonld:
+    get:
+      tags: [ JSON-LD Endpoints ]
+      summary: List JSON-LD records for all domains in your project
+      description: |
+        Returns a paginated list of JSON-LD records across all domains in the authenticated project.
+
+        **Key Features:**
+        - Cursor-based pagination with configurable page size
+        - Filterable by hash, URL, status, ETag, readonly, and timestamps
+        - Efficient project-level index lookup
+
+      operationId: listJsonLd
+      security:
+        - BearerAuth: [ ]
+      parameters:
+        - in: query
+          name: limit
+          required: false
+          description: |
+            Maximum number of records per page. Default: 100, Max: 1000.
+          schema:
+            type: integer
+            minimum: 1
+            maximum: 1000
+            default: 100
+        - in: query
+          name: next_token
+          required: false
+          description: |
+            Pagination cursor from a previous response. Pass this to retrieve the next page of results.
+          schema:
+            type: string
+        - in: query
+          name: hash
+          required: false
+          description: Filter by exact hash (MD5 of normalized URL).
+          schema:
+            type: string
+        - in: query
+          name: url
+          required: false
+          description: |
+            Filter by URL. The hostname is used to narrow to the matching domain, then exact URL match is applied.
+          schema:
+            type: string
+        - in: query
+          name: status
+          required: false
+          description: Filter by processing status.
+          schema:
+            $ref: '#/components/schemas/JsonLdStatus'
+        - in: query
+          name: etag
+          required: false
+          description: |
+            Filter by ETag value. Use `*` to match records that have any ETag (i.e., have been processed at least once).
+          schema:
+            type: string
+        - in: query
+          name: readonly
+          required: false
+          description: Filter by readonly status.
+          schema:
+            type: boolean
+        - in: query
+          name: created_at
+          required: false
+          description: Filter records created after this timestamp (ISO 8601).
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: updated_at
+          required: false
+          description: Filter records updated after this timestamp (ISO 8601).
+          schema:
+            type: string
+            format: date-time
+        - in: query
+          name: crawled_at
+          required: false
+          description: Filter records crawled after this timestamp (ISO 8601).
+          schema:
+            type: string
+            format: date-time
+      responses:
+        '200':
+          description: Paginated list of JSON-LD records.
+          headers:
+            RateLimit-Limit:
+              $ref: '#/components/headers/RateLimit-Limit'
+            RateLimit-Remaining:
+              $ref: '#/components/headers/RateLimit-Remaining'
+            RateLimit-Reset:
+              $ref: '#/components/headers/RateLimit-Reset'
+          content:
+            application/json:
+              schema:
+                type: object
+                required:
+                  - data
+                  - pagination
+                properties:
+                  data:
+                    type: array
+                    items:
+                      $ref: '#/components/schemas/JsonLdListItem'
+                  pagination:
+                    type: object
+                    required:
+                      - count
+                      - limit
+                    properties:
+                      count:
+                        type: integer
+                        description: Number of records in this page.
+                      limit:
+                        type: integer
+                        description: Requested page size.
+                      next_token:
+                        type: string
+                        description: Cursor for the next page. Absent when there are no more results.
+              example:
+                data:
+                  - hash: "7c165c13f93d7ca168bcfbd73cf563e3"
+                    url: "https://example.com/page"
+                    etag: "a1b2c3d4e5f6"
+                    crawled_at: "2025-01-16T14:30:00Z"
+                    http_status_code: 200
+                    status: "ready"
+                    readonly: false
+                  - hash: "e4d909c290d0fb1ca068ffaddf22cbd0"
+                    url: "https://example.com/about"
+                    etag: "b2c3d4e5f6a7"
+                    crawled_at: "2025-01-16T15:00:00Z"
+                    http_status_code: 200
+                    status: "ready"
+                    readonly: false
+                pagination:
+                  count: 2
+                  limit: 100
+        '401':
+          $ref: '#/components/responses/Unauthorized'
+        '429':
+          $ref: '#/components/responses/TooManyRequests'
+        '500':
+          $ref: '#/components/responses/ServerError'
     post:
       tags: [ JSON-LD Endpoints ]
       summary: Generate or retrieve JSON-LD for a URL (Primary Integration Endpoint)
@@ -450,6 +602,36 @@ components:
             Optional. Raw HTML content of the page. When provided, the crawler will use this HTML instead of fetching the page, allowing you to generate JSON-LD for pages that require JavaScript rendering or are behind authentication.
 
             **Limits:** Max 5 MB uncompressed.
+
+    JsonLdListItem:
+      type: object
+      description: Summary of a JSON-LD record returned in list responses.
+      required:
+        - hash
+        - url
+        - status
+      properties:
+        hash:
+          type: string
+          description: MD5 hash of the normalized URL.
+        url:
+          type: string
+          description: The source URL.
+        etag:
+          type: ['string', 'null']
+          description: ETag for caching. Null if the record hasn't been processed yet.
+        crawled_at:
+          type: ['string', 'null']
+          format: date-time
+          description: When the URL was last crawled.
+        http_status_code:
+          type: ['integer', 'null']
+          description: HTTP status code returned when the page was crawled.
+        status:
+          $ref: '#/components/schemas/JsonLdStatus'
+        readonly:
+          type: ['boolean', 'null']
+          description: Whether this record is read-only (protected from regeneration).
 
     JsonLdStatus:
       type: string

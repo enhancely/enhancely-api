@@ -1,5 +1,12 @@
 # Changelog
 
+## [1.2.0] – 2026-02-16
+
+### Added
+- **`GET /api/v1/jsonld` list endpoint** — List all JSON-LD records across your project with cursor-based pagination. Supports filtering by `hash`, `url`, `status`, `etag`, `readonly`, `created_at`, `updated_at`, and `crawled_at`. Authenticated with project API key (Bearer token).
+- **`JsonLdListItem` schema** — Defines the shape of records returned in list responses: `hash`, `url`, `etag`, `crawled_at`, `http_status_code`, `status`, `readonly`.
+- **Integration Approaches** section updated to document `GET /api/v1/jsonld` use cases.
+
 ## [1.1.0] – 2026-02-09
 
 ### Breaking Changes
