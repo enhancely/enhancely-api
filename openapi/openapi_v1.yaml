@@ -2,7 +2,7 @@ openapi: 3.1.0
 jsonSchemaDialect: https://spec.openapis.org/oas/3.1/dialect/base
 info:
   title: Enhancely API
-  version: "1.2.0"
+  version: "1.3.0"
   x-logo:
     url: enhancely-logo.png
     altText: Enhancely Logo
@@ -381,20 +381,32 @@ paths:
                         description: Cursor for the next page. Absent when there are no more results.
               example:
                 data:
-                  - hash: "7c165c13f93d7ca168bcfbd73cf563e3"
+                  - jsonld_id: "a1b2c3d4-e5f6-7890-abcd-ef1234567890"
+                    hash: "7c165c13f93d7ca168bcfbd73cf563e3"
                     url: "https://example.com/page"
+                    domain_id: "d1e2f3a4-b5c6-7890-abcd-ef1234567890"
+                    project_id: "p1r2o3j4-e5c6-7890-abcd-ef1234567890"
+                    organization_id: "o1r2g3a4-n5i6-7890-abcd-ef1234567890"
                     etag: "a1b2c3d4e5f6"
                     crawled_at: "2025-01-16T14:30:00Z"
                     http_status_code: 200
                     status: "ready"
                     readonly: false
-                  - hash: "e4d909c290d0fb1ca068ffaddf22cbd0"
+                    created_at: "2025-01-15T10:00:00Z"
+                    updated_at: "2025-01-16T14:30:00Z"
+                  - jsonld_id: "b2c3d4e5-f6a7-8901-bcde-f12345678901"
+                    hash: "e4d909c290d0fb1ca068ffaddf22cbd0"
                     url: "https://example.com/about"
+                    domain_id: "d1e2f3a4-b5c6-7890-abcd-ef1234567890"
+                    project_id: "p1r2o3j4-e5c6-7890-abcd-ef1234567890"
+                    organization_id: "o1r2g3a4-n5i6-7890-abcd-ef1234567890"
                     etag: "b2c3d4e5f6a7"
                     crawled_at: "2025-01-16T15:00:00Z"
                     http_status_code: 200
                     status: "ready"
                     readonly: false
+                    created_at: "2025-01-15T10:05:00Z"
+                    updated_at: "2025-01-16T15:00:00Z"
                 pagination:
                   count: 2
                   limit: 100
@@ -607,16 +619,32 @@ components:
       type: object
       description: Summary of a JSON-LD record returned in list responses.
       required:
+        - jsonld_id
         - hash
         - url
+        - domain_id
+        - project_id
+        - organization_id
         - status
       properties:
+        jsonld_id:
+          type: string
+          description: Unique identifier for this JSON-LD record.
         hash:
           type: string
           description: MD5 hash of the normalized URL.
         url:
           type: string
           description: The source URL.
+        domain_id:
+          type: string
+          description: ID of the domain this record belongs to.
+        project_id:
+          type: string
+          description: ID of the project this record belongs to.
+        organization_id:
+          type: string
+          description: ID of the organization this record belongs to.
         etag:
           type: ['string', 'null']
           description: ETag for caching. Null if the record hasn't been processed yet.
@@ -632,6 +660,14 @@ components:
         readonly:
           type: ['boolean', 'null']
           description: Whether this record is read-only (protected from regeneration).
+        created_at:
+          type: string
+          format: date-time
+          description: When this record was created.
+        updated_at:
+          type: string
+          format: date-time
+          description: When this record was last updated.
 
     JsonLdStatus:
       type: string
