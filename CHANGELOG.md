@@ -1,5 +1,21 @@
 # Changelog
 
+## [1.4.0] – 2026-03-11
+
+### Added
+- **`redirect_target_hash` field** added to `JsonLdListItem` — MD5 hash of the redirect target record. Present when the record is a redirect pointer.
+- **`redirect_target_url` field** added to `JsonLdListItem` — URL of the redirect target record. Present when the record is a redirect pointer.
+- **`redirect_http_status` field** added to `JsonLdListItem` — HTTP redirect status code (e.g., 301, 302). Present when the record is a redirect pointer.
+- **`redirect` status** added to `JsonLdStatus` enum — Indicates the record is a redirect pointer to another URL.
+- **`X-Redirect-From-Hash` response header** on `GET /api/v1/jsonld/{hash}` — Present when a redirect was followed; contains the MD5 hash of the originally requested URL.
+- **`X-Redirect-To-Hash` response header** on `GET /api/v1/jsonld/{hash}` — Present when a redirect was followed; contains the MD5 hash of the final (canonical) URL.
+
+## [1.3.1] – 2026-03-06
+
+### Added
+- **`hash` and `url` fields** in 201 Created response — The POST `/api/v1/jsonld` 201 response now includes `hash` (MD5 of the final URL) and `url` (the final URL after redirect resolution) for redirect-aware navigation.
+- **`redirected_from_urls` field** added to JSON-LD responses (`OkJsonLd` and `JsonLdListItem`) — An array of original URLs that redirected to the final URL. Empty or absent when no redirect occurred.
+
 ## [1.2.0] – 2026-02-16
 
 ### Added

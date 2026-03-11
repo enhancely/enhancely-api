@@ -2,7 +2,7 @@ openapi: 3.1.0
 jsonSchemaDialect: https://spec.openapis.org/oas/3.1/dialect/base
 info:
   title: Enhancely API
-  version: "1.3.0"
+  version: "1.4.0"
   x-logo:
     url: enhancely-logo.png
     altText: Enhancely Logo
@@ -392,6 +392,10 @@ paths:
                     http_status_code: 200
                     status: "ready"
                     readonly: false
+                    redirected_from_urls: ["https://example.com/old-page"]
+                    redirect_target_hash: null
+                    redirect_target_url: null
+                    redirect_http_status: null
                     created_at: "2025-01-15T10:00:00Z"
                     updated_at: "2025-01-16T14:30:00Z"
                   - jsonld_id: "b2c3d4e5-f6a7-8901-bcde-f12345678901"
@@ -405,6 +409,10 @@ paths:
                     http_status_code: 200
                     status: "ready"
                     readonly: false
+                    redirected_from_urls: []
+                    redirect_target_hash: null
+                    redirect_target_url: null
+                    redirect_http_status: null
                     created_at: "2025-01-15T10:05:00Z"
                     updated_at: "2025-01-16T15:00:00Z"
                 pagination:
@@ -660,6 +668,21 @@ components:
         readonly:
           type: ['boolean', 'null']
           description: Whether this record is read-only (protected from regeneration).
+        redirected_from_urls:
+          type: array
+          items:
+            type: string
+            format: uri
+          description: Original URLs that redirected to this final URL.
+        redirect_target_hash:
+          type: ['string', 'null']
+          description: MD5 hash of the redirect target record. Present when this record is a redirect pointer.
+        redirect_target_url:
+          type: ['string', 'null']
+          description: URL of the redirect target record. Present when this record is a redirect pointer.
+        redirect_http_status:
+          type: ['integer', 'null']
+          description: HTTP redirect status code (e.g., 301, 302). Present when this record is a redirect pointer.
         created_at:
           type: string
           format: date-time
@@ -679,6 +702,7 @@ components:
         - `ready`: Successfully generated JSON-LD document (has etag and content)
         - `ignored`: Record has been marked as ignored and will not be regenerated
         - `generation_limit_reached`: Monthly generation limit was reached during processing
+        - `redirect`: Record is a redirect pointer to another URL (see `redirect_target_hash`)
       enum:
         - created
         - updating
@@ -686,6 +710,7 @@ components:
         - ready
         - ignored
         - generation_limit_reached
+        - redirect
 
     Problem:
       type: object
@@ -759,9 +784,17 @@ components:
               message:
                 type: string
                 description: Human-readable status message.
+              hash:
+                type: string
+                description: MD5 hash of the (possibly redirected) final URL.
+              url:
+                type: string
+                description: The final URL after redirect resolution. May differ from the submitted URL.
           example:
             status: "processing"
             message: "Record created and the crawler is now processing the requested resource. Please try again later."
+            hash: "7c165c13f93d7ca168bcfbd73cf563e3"
+            url: "https://example.com/page"
 
     AcceptedJsonLd:
       description: |
@@ -807,6 +840,14 @@ components:
             enum: [HIT, MISS]
         X-JsonLd-Status:
           description: Present only when the record status is `ignored`. Value is `ignored`.
+          schema:
+            type: string
+        X-Redirect-From-Hash:
+          description: Present when a redirect was followed. Contains the MD5 hash of the originally requested URL.
+          schema:
+            type: string
+        X-Redirect-To-Hash:
+          description: Present when a redirect was followed. Contains the MD5 hash of the final (canonical) URL.
           schema:
             type: string
         RateLimit-Limit:
@@ -867,6 +908,12 @@ components:
               readonly:
                 type: ['boolean', 'null']
                 description: Whether this record is read-only (protected from regeneration)
+              redirected_from_urls:
+                type: array
+                items:
+                  type: string
+                  format: uri
+                description: Original URLs that redirected to this final URL. Empty or absent when no redirect occurred.
           example:
             hash: "7c165c13f93d7ca168bcfbd73cf563e3"
             url: "https://example.com/lecture-12"
