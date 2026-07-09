@@ -5,10 +5,12 @@ on:
     branches:
       - main
     paths:
-      - 'openapi/**/*.y?(a)ml'
+      - 'openapi/**/*.yml'
+      - 'openapi/**/*.yaml'
   pull_request:
     paths:
-      - 'openapi/**/*.y?(a)ml'
+      - 'openapi/**/*.yml'
+      - 'openapi/**/*.yaml'
 
 env:
   SPEC_PATH: openapi/openapi_v1.yaml
