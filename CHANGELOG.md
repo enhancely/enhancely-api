@@ -1,5 +1,22 @@
 # Changelog
 
+## [1.4.2] – 2026-07-10
+
+### Documentation (no API behavior changes)
+
+Full docs-vs-implementation consistency audit:
+
+- **URL hash calculation corrected** — The hash is the MD5 of the **normalized** URL (https forced, query parameters and fragment stripped, trailing slash removed). The previous example hashed the raw URL. Recommended: use the `hash` returned by POST responses instead of computing it yourself.
+- **URL-as-path-parameter documented** — `GET /api/v1/jsonld/{hash}` also accepts a URL-encoded absolute URL; the server normalizes and hashes it.
+- **404-polling rate limit documented** — Excessive polling of nonexistent hashes returns `429` (*Too Many Not Found Requests*) with `Retry-After: 60`.
+- **List endpoint parameters added** — `jsonld_id`, `domain_id`, `sort` (camelCase fields: `url`, `createdAt`, `updatedAt`, `status`, `crawledAt`, `httpStatusCode`), and `order` (`asc`/`desc`) were implemented but undocumented.
+- **`X-Request-Id` / `instance` documented** — Every response carries an `X-Request-Id` header (UUID); Problem bodies repeat it in `instance`. Include it in support requests.
+- **`etag` and `crawled_at` are nullable in 200 bodies** — Terminal `failed` records return `etag: null`, `crawled_at: null`, and `jsonld: {}`.
+- **`Accept: application/ld+json` must be exact** — Media type lists or parameters fall back to `application/json`.
+- **`html` request field limits completed** — 5 MB uncompressed **and** 350 KB after server-side gzip (data: URIs / inline SVGs are stripped first).
+- **400 examples added** — hostname-mismatch (URL host not registered in the project) and denylist rejections.
+- **`RateLimit-Limit` header** — documented as the literal `none` when no rate limit is configured.
+
 ## [1.4.1] – 2026-07-10
 
 ### Documentation (no API behavior changes)
