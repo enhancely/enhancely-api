@@ -1,5 +1,18 @@
 # Changelog
 
+## [1.4.1] – 2026-07-10
+
+### Documentation (no API behavior changes)
+
+Clarifications based on integrator feedback (Finanz Informatik pilot):
+
+- **Response body shapes documented explicitly** — New *Processing Model → Response Body Shapes* table: 200 returns the full record with a `status` **string** (`ready`, `updating`, `failed`, ...); 201 returns `{ "status": "processing", "message", "hash", "url" }` (fixed literal); 202 and all 4xx/5xx errors return an RFC 9457 Problem object whose `status` field is the **numeric** HTTP status code. Clients should switch on the HTTP status code first, then parse the body.
+- **`202 Accepted` documented on `GET /api/v1/jsonld/{hash}`** — The polling endpoint returns 202 (Problem body) while JSON-LD generation is still in progress. This was previously undocumented.
+- **ETag behavior during processing documented** — First-time processing: no ETag exists yet, `If-None-Match` has no effect, polling keeps returning 202. Regeneration: the previous ETag stays valid and returns `304 Not Modified` until the new version is ready.
+- **`http_status_code` clarified** — This field contains the HTTP status the crawler received *from your page* during the last crawl, not the status of the API response.
+- **`status: failed` clarified** — A terminal record state delivered with HTTP 200; unrelated to `400 Bad Request` (invalid API request).
+- **201 response schema tightened** — `status` is now documented as the enum literal `processing`.
+
 ## [1.4.0] – 2026-03-11
 
 ### Added

@@ -2,7 +2,7 @@ openapi: 3.1.0
 jsonSchemaDialect: https://spec.openapis.org/oas/3.1/dialect/base
 info:
   title: Enhancely API
-  version: "1.4.0"
+  version: "1.4.1"
   x-logo:
     url: enhancely-logo.png
     altText: Enhancely Logo
@@ -63,6 +63,7 @@ info:
     **Use GET /api/v1/jsonld/{hash} for:**
     - Polling processing status after receiving 201/202 from POST
     - Direct retrieval when you already have the MD5 hash
+    - Returns `202 Accepted` while JSON-LD generation is still in progress
     - Returns `304 Not Modified` when ETag matches (cache valid)
 
     ### CMS Plugins & Website Integration (Recommended)
@@ -146,18 +147,37 @@ info:
 
     JSON-LD generation is **asynchronous**. When you submit a URL:
 
-    1. **201 Created**: The URL is queued for processing (first time submission)
-    2. **202 Accepted**: The URL exists but is currently being processed
-    3. **200 OK**: The JSON-LD already exists and is available (with current status)
+    1. **201 Created**: The URL is queued for processing (first-time submission)
+    2. **202 Accepted**: The record exists but its JSON-LD has not been generated yet (still processing)
+    3. **200 OK**: Generated JSON-LD exists and is returned in full (check the record's `status` field)
 
-    Processing typically takes 1-3 minutes depending on page complexity and queue depth. The response includes a `status` field:
+    Processing typically takes 1-3 minutes depending on page complexity and queue depth.
 
-    - `created`: Queued for processing, JSON-LD generation hasn't started yet (typically returns 201 on first POST)
-    - `updating`: Currently being processed (returns 202 when still processing)
-    - `ready`: JSON-LD is available and ready to use (returns 200 with full content)
-    - `failed`: Generation failed (e.g., invalid page, unreachable URL)
+    ### Response Body Shapes
 
-    For newly created records or records being processed (201/202 responses), poll the **GET /api/v1/jsonld/{hash}** endpoint to check when processing completes and the status becomes `ready`.
+    The response body shape depends on the HTTP status code — **do not assume a uniform `status` field across all responses**:
+
+    | HTTP code | Body shape | `status` field contains |
+    |-----------|------------|-------------------------|
+    | **200 OK** | Full record (`hash`, `url`, `jsonld`, `etag`, ...) | Record status **string**: `ready`, `updating`, `failed`, ... |
+    | **201 Created** | `{ "status": "processing", "message": ..., "hash": ..., "url": ... }` | The fixed literal string `processing` |
+    | **202 Accepted** | RFC 9457 Problem (`type`, `title`, `status`, `detail`) | The **numeric** HTTP status code `202` |
+    | **4xx / 5xx** | RFC 9457 Problem (`type`, `title`, `status`, `detail`) | The **numeric** HTTP status code (e.g., `400`, `429`) |
+
+    To handle responses reliably, switch on the **HTTP status code of the response first**, then interpret the body using the shape that belongs to that code.
+
+    ### Record Status Lifecycle
+
+    The `status` field inside **200 responses** (and list items) reflects the record's processing lifecycle:
+
+    - `created`: Queued for processing, JSON-LD generation hasn't started yet
+    - `updating`: Currently being (re)processed
+    - `ready`: JSON-LD is available and ready to use
+    - `failed`: Generation failed (e.g., invalid page, unreachable URL). This is a terminal record state delivered with **HTTP 200** — it is unrelated to `400 Bad Request` errors, which indicate an invalid API request.
+
+    **Note:** the `http_status_code` field in 200 responses is the HTTP status the crawler received **from your page** during the last crawl (e.g., `200`, `404`) — it is **not** the status code of the API response you are reading. The HTTP status of the API response itself is available in the response status line and, for Problem bodies, duplicated in the numeric `status` field.
+
+    For newly created records or records still being processed (201/202 responses), poll the **GET /api/v1/jsonld/{hash}** endpoint. It returns **202 Accepted** while processing continues and **200 OK** once the JSON-LD is available.
 
     ## Rate Limiting
 
@@ -232,6 +252,8 @@ info:
       "detail": "You have exceeded your rate limit. Please try again later."
     }
     ```
+
+    All error responses — and the `202 Accepted` still-processing response — use this RFC 9457 Problem shape with the same four fields: `type` (URI identifying the problem), `title` (short summary), `status` (**numeric** HTTP status code, duplicating the response status line), and `detail` (human-readable explanation). Some problems add extra fields (e.g., `limit`, `remaining`, `resetAt` on monthly-limit errors).
 
     ### Best Practices
 
@@ -433,12 +455,14 @@ paths:
         Submits a URL for JSON-LD generation or retrieves existing data if already processed. Automatically creates new records if they don't exist.
 
         **Response Codes:**
-        - **200 OK** - JSON-LD exists (check `status`: `ready`, `updating`, or `failed`)
-        - **201 Created** - URL queued for first-time processing (poll GET /{hash} for completion)
-        - **202 Accepted** - Currently being processed (poll GET /{hash} for completion)
+        - **200 OK** - JSON-LD exists; full record body (check `status`: `ready`, `updating`, or `failed`)
+        - **201 Created** - URL queued for first-time processing; body is `{ "status": "processing", "message", "hash", "url" }` (poll GET /{hash} for completion)
+        - **202 Accepted** - Currently being processed; body is an RFC 9457 Problem with numeric `status: 202` (poll GET /{hash} for completion)
         - **403 Forbidden** - Plan limit exceeded or domain not validated
         - **412 Precondition Failed** - ETag matches, use cached data
         - **429 Too Many Requests** - Monthly generation limit reached (includes `Retry-After` header)
+
+        Note that the body shape differs per status code — see the *Processing Model → Response Body Shapes* section above.
 
         **Key Features:**
         - Asynchronous processing (typically a few minutes for new URLs)
@@ -521,8 +545,13 @@ paths:
 
         **Response Codes:**
         - **200 OK** - JSON-LD returned with metadata (includes `status` field)
+        - **202 Accepted** - Record exists but JSON-LD generation hasn't completed yet; body is an RFC 9457 Problem with numeric `status: 202`. Keep polling.
         - **304 Not Modified** - Content unchanged (when `If-None-Match` header matches ETag)
         - **404 Not Found** - Hash doesn't exist (use POST to create)
+
+        **ETag behavior while processing:**
+        - While a record is being processed for the **first time** it has no ETag yet — `If-None-Match` has no effect and the endpoint keeps returning `202 Accepted` until processing completes.
+        - During **regeneration** of an existing record, the previous ETag stays valid: a matching `If-None-Match` returns `304 Not Modified` until the new version replaces it. A non-matching (or absent) `If-None-Match` returns `200 OK` with the current content and `status: "updating"`.
 
       operationId: getJsonLdById
       security:
@@ -567,6 +596,8 @@ paths:
       responses:
         '200':
           $ref: '#/components/responses/OkJsonLd'
+        '202':
+          $ref: '#/components/responses/AcceptedJsonLd'
         '304':
           $ref: '#/components/responses/NotModified'
         '400':
@@ -662,7 +693,9 @@ components:
           description: When the URL was last crawled.
         http_status_code:
           type: ['integer', 'null']
-          description: HTTP status code returned when the page was crawled.
+          description: |
+            HTTP status code the crawler received **from your page** when it was last crawled.
+            This is **not** the status code of this API response.
         status:
           $ref: '#/components/schemas/JsonLdStatus'
         readonly:
@@ -773,6 +806,8 @@ components:
     CreatedJsonLd:
       description: |
         Record created and the crawler is now processing the requested resource. Poll the `GET /api/v1/jsonld/{hash}` endpoint to check when processing completes.
+
+        **Note:** the `status` field in this body is the fixed literal `processing` — it is *not* one of the record lifecycle statuses (`created`, `updating`, `ready`, ...) returned in 200 responses.
       content:
         application/json:
           schema:
@@ -780,7 +815,8 @@ components:
             properties:
               status:
                 type: string
-                description: Processing status indicator.
+                enum: [processing]
+                description: Fixed literal `processing`. Not a record lifecycle status.
               message:
                 type: string
                 description: Human-readable status message.
@@ -798,7 +834,9 @@ components:
 
     AcceptedJsonLd:
       description: |
-        The crawler is still processing the requested resource.
+        The crawler is still processing the requested resource. Returned by `POST /api/v1/jsonld` for existing records still being processed, and by `GET /api/v1/jsonld/{hash}` while polling.
+
+        **Note:** the body is an RFC 9457 Problem object — its `status` field contains the **numeric** HTTP status code `202`, not a record lifecycle status string.
       content:
         application/json:
           schema:
@@ -902,7 +940,9 @@ components:
                 description: When the URL was last crawled (null for newly created records)
               http_status_code:
                 type: ['integer', 'null']
-                description: HTTP status code returned when the page was crawled (e.g., 200, 404)
+                description: |
+                  HTTP status code the crawler received **from your page** when it was last crawled (e.g., 200, 404).
+                  This is **not** the status code of this API response.
               status:
                 $ref: '#/components/schemas/JsonLdStatus'
               readonly:
