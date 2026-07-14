@@ -1,5 +1,15 @@
 # Changelog
 
+## [1.4.3] – 2026-07-14
+
+### Documentation (no API behavior changes)
+
+Follow-up audit of the documented response codes against the implementation (Finanz Informatik pilot):
+
+- **`403 Forbidden` documented on both `GET` endpoints** — A suspended subscription (failed payment) is rejected by the auth layer on *every* endpoint, including the read-only `GET /api/v1/jsonld` and `GET /api/v1/jsonld/{hash}`. Only `POST` listed a 403 before. New `subscription-suspended` example added.
+- **`400 Bad Request` documented on `GET /api/v1/jsonld`** — Invalid query parameters (`readonly`, `url`, `domain_id`, `sort`/`order`) return 400. New `invalid-filter` example added.
+- **Response code list of `GET /api/v1/jsonld/{hash}` completed** — 403 and 429 were missing from the endpoint's *Response Codes* summary (the `202` entry was already added in 1.4.1; if you don't see it, reload the page — it may be cached).
+
 ## [1.4.2] – 2026-07-10
 
 ### Documentation (no API behavior changes)

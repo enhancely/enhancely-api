@@ -2,7 +2,7 @@ openapi: 3.1.0
 jsonSchemaDialect: https://spec.openapis.org/oas/3.1/dialect/base
 info:
   title: Enhancely API
-  version: "1.4.2"
+  version: "1.4.3"
   x-logo:
     url: enhancely-logo.png
     altText: Enhancely Logo
@@ -473,8 +473,12 @@ paths:
                 pagination:
                   count: 2
                   limit: 100
+        '400':
+          $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/LimitExceeded'
         '429':
           $ref: '#/components/responses/TooManyRequests'
         '500':
@@ -603,7 +607,9 @@ paths:
         - **200 OK** - JSON-LD returned with metadata (includes `status` field)
         - **202 Accepted** - Record exists but JSON-LD generation hasn't completed yet; body is an RFC 9457 Problem with numeric `status: 202`. Keep polling.
         - **304 Not Modified** - Content unchanged (when `If-None-Match` header matches ETag)
+        - **403 Forbidden** - Subscription suspended (payment failed)
         - **404 Not Found** - Hash doesn't exist (use POST to create)
+        - **429 Too Many Requests** - Rate limit exceeded, or too many polls for nonexistent hashes (see *Polling etiquette* above)
 
         **ETag behavior while processing:**
         - While a record is being processed for the **first time** it has no ETag yet — `If-None-Match` has no effect and the endpoint keeps returning `202 Accepted` until processing completes.
@@ -662,6 +668,8 @@ paths:
           $ref: '#/components/responses/BadRequest'
         '401':
           $ref: '#/components/responses/Unauthorized'
+        '403':
+          $ref: '#/components/responses/LimitExceeded'
         '404':
           $ref: '#/components/responses/NotFound'
         '429':
@@ -1064,6 +1072,13 @@ components:
                 title: "Bad Request"
                 status: 400
                 detail: "URL rejected by denylist"
+            invalid-filter:
+              summary: Invalid query parameter on the list endpoint
+              value:
+                type: "https://enhancely.ai/problems/bad-request"
+                title: "Bad Request"
+                status: 400
+                detail: "Invalid readonly filter: expected true or false"
 
     Unauthorized:
       description: Missing or invalid bearer token.
@@ -1151,12 +1166,22 @@ components:
                 detail: "Too many requests for nonexistent resources. Please verify your JSON-LD hashes are correct and reduce polling frequency."
 
     LimitExceeded:
-      description: Plan limit exceeded or domain not validated.
+      description: |
+        Plan limit exceeded, domain not validated, or subscription suspended.
+
+        A suspended subscription (failed payment) blocks **every** endpoint, including the read-only `GET` endpoints — update the payment method to restore access.
       content:
         application/json:
           schema:
             $ref: '#/components/schemas/Problem'
           examples:
+            subscription-suspended:
+              summary: Subscription suspended (payment failed) — affects all endpoints
+              value:
+                type: "https://enhancely.ai/problems/subscription-suspended"
+                title: "Subscription Suspended"
+                status: 403
+                detail: "Your subscription payment has failed. Update your payment method at /billing to restore access."
             plan-limit:
               summary: Plan JSON-LD limit reached
               value:
