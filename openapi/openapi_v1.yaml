@@ -2,7 +2,7 @@ openapi: 3.1.0
 jsonSchemaDialect: https://spec.openapis.org/oas/3.1/dialect/base
 info:
   title: Enhancely API
-  version: "1.4.3"
+  version: "1.5.0"
   x-logo:
     url: enhancely-logo.png
     altText: Enhancely Logo
@@ -32,6 +32,7 @@ info:
     ### Key Benefits
 
     - **Automatic Updates**: Nightly crawls detect content changes and regenerate JSON-LD
+    - **Explicit Change Signals**: CMS hooks can request a fresh crawl immediately after publishing
     - **Efficient Caching**: ETag-based validation minimizes bandwidth and API calls
     - **Always Fresh**: Your structured data stays synchronized with page content
     - **Minimal Maintenance**: Automatic nightly updates with manual cache clearing only when you update content
@@ -76,9 +77,10 @@ info:
     4. **Cache Key Generation**: Use MD5 hash of the normalized URL as the cache key
     5. **ETag Validation**: Always send `If-None-Match` header with cached ETag
     6. **Silent Degradation**: Return empty output on errors to avoid breaking page rendering
-    7. **Cache Invalidation**: Clear local cache when you manually update page content via CMS (use CMS hooks like `page.update:before`). Auto-clear cache in local/development environments for testing.
+    7. **Content Change Signal**: After your CMS publishes a page update, send `content_changed: true` once and clear your local JSON-LD cache. Enhancely coalesces duplicate notifications for the same URL.
+    8. **Cache Invalidation**: Auto-clear cache in local/development environments for testing.
 
-    **Note**: Enhancely automatically checks all indexed URLs nightly. Normal content changes are detected via ETag validation on your next API call—manual cache clearing is only needed when you actively update content through your CMS.
+    **Note**: Enhancely automatically checks all indexed URLs nightly. Use the explicit change signal only when your CMS knows that a page was published and you want a fresh crawl before the next nightly check.
 
     ## Cache Strategy
 
@@ -132,9 +134,20 @@ info:
     - Standard HTTP caching mechanism supported by all HTTP clients
     - Learn more: [MDN: HTTP Conditional Requests](https://developer.mozilla.org/en-US/docs/Web/HTTP/Conditional_requests)
 
-    ### Content Change Detection
+    ### Explicit Content Change Detection
 
-    When HTML content changes, Enhancely reprocesses the JSON-LD and generates a new ETag.
+    When your CMS publishes a page update, call the normal endpoint with a strict JSON Boolean:
+
+    ```json
+    {
+      "url": "https://example.com/page",
+      "content_changed": true
+    }
+    ```
+
+    This bypasses the existing-record/cache fast path, fetches the page again and regenerates JSON-LD. Do not combine `content_changed: true` with `html`; supplied HTML is already authoritative and continues to use the existing HTML path.
+
+    An organization can configure a delay from 0 to 1,440 minutes. A delay of 0 queues the refresh immediately. A positive delay schedules it once before the normal FIFO worker. Repeated notifications for the same normalized URL are coalesced: the first accepted notification fixes the due time, later notifications return `deduplicated: true` and do not create another queue message or schedule. A notification received while processing causes at most one follow-up refresh.
 
     ### Recommended Flow:
     1. Check local cache for ETag and JSON-LD data
@@ -160,8 +173,8 @@ info:
     | HTTP code | Body shape | `status` field contains |
     |-----------|------------|-------------------------|
     | **200 OK** | Full record (`hash`, `url`, `jsonld`, `etag`, ...) | Record status **string**: `ready`, `updating`, `failed`, ... |
-    | **201 Created** | `{ "status": "processing", "message": ..., "hash": ..., "url": ... }` | The fixed literal string `processing` |
-    | **202 Accepted** | RFC 9457 Problem (`type`, `title`, `status`, `detail`) | The **numeric** HTTP status code `202` |
+    | **201 Created** | Standard creation body, or `ContentChangeRefreshAccepted` when `content_changed: true` created the record | `processing` for standard creation; `queued` or `scheduled` for a change signal |
+    | **202 Accepted** | RFC 9457 Problem for passive processing, or `ContentChangeRefreshAccepted` for an accepted change signal | Numeric `202` in the Problem body; lifecycle state in the change-signal body |
     | **4xx / 5xx** | RFC 9457 Problem (`type`, `title`, `status`, `detail`) | The **numeric** HTTP status code (e.g., `400`, `429`) |
 
     To handle responses reliably, switch on the **HTTP status code of the response first**, then interpret the body using the shape that belongs to that code.
@@ -253,7 +266,7 @@ info:
     }
     ```
 
-    All error responses — and the `202 Accepted` still-processing response — use this RFC 9457 Problem shape with the same four fields: `type` (URI identifying the problem), `title` (short summary), `status` (**numeric** HTTP status code, duplicating the response status line), and `detail` (human-readable explanation). Some problems add extra fields (e.g., `limit`, `remaining`, `resetAt` on monthly-limit errors).
+    All error responses — and the passive `202 Accepted` still-processing response — use this RFC 9457 Problem shape with the same four fields: `type` (URI identifying the problem), `title` (short summary), `status` (**numeric** HTTP status code, duplicating the response status line), and `detail` (human-readable explanation). An accepted `content_changed: true` request instead returns the documented `ContentChangeRefreshAccepted` body. Some problems add extra fields (e.g., `limit`, `remaining`, `resetAt` on monthly-limit errors).
 
     ### Request IDs
 
@@ -493,11 +506,13 @@ paths:
 
         **Response Codes:**
         - **200 OK** - JSON-LD exists; full record body (check `status`: `ready`, `updating`, or `failed`)
-        - **201 Created** - URL queued for first-time processing; body is `{ "status": "processing", "message", "hash", "url" }` (poll GET /{hash} for completion)
-        - **202 Accepted** - Currently being processed; body is an RFC 9457 Problem with numeric `status: 202` (poll GET /{hash} for completion)
+        - **201 Created** - URL queued for first-time processing. Standard requests return the processing body; a `content_changed: true` request that creates the record returns `ContentChangeRefreshAccepted`.
+        - **202 Accepted** - A standard request is still processing (RFC 9457 Problem body), or a content-change refresh was accepted/coalesced (`ContentChangeRefreshAccepted`).
         - **403 Forbidden** - Plan limit exceeded or domain not validated
+        - **409 Conflict** - A content-change refresh targets a readonly or ignored record
         - **412 Precondition Failed** - ETag matches, use cached data
         - **429 Too Many Requests** - Monthly generation limit reached (includes `Retry-After` header)
+        - **503 Service Unavailable** - The content-change orchestrator could not confirm durable dispatch; retry with backoff
 
         Note that the body shape differs per status code — see the *Processing Model → Response Body Shapes* section above.
 
@@ -506,8 +521,7 @@ paths:
         - ETag-based conditional requests for efficient caching
         - Supports complex URLs in request body (no query string limits)
         - Optionally accepts `html` in the request body to skip crawling
-
-
+        - Accepts `content_changed: true` from CMS publish hooks to force a fresh crawl and coalesce duplicates
 
       operationId: postJsonLd
       security:
@@ -540,7 +554,7 @@ paths:
         '201':
           $ref: '#/components/responses/CreatedJsonLd'
         '202':
-          $ref: '#/components/responses/AcceptedJsonLd'
+          $ref: '#/components/responses/AcceptedOrContentChangeJsonLd'
         '200':
           $ref: '#/components/responses/OkJsonLd'
         '400':
@@ -549,6 +563,8 @@ paths:
           $ref: '#/components/responses/Unauthorized'
         '403':
           $ref: '#/components/responses/LimitExceeded'
+        '409':
+          $ref: '#/components/responses/Conflict'
         '412':
           $ref: '#/components/responses/PreconditionFailed'
         '415':
@@ -557,6 +573,8 @@ paths:
           $ref: '#/components/responses/TooManyRequests'
         '500':
           $ref: '#/components/responses/ServerError'
+        '503':
+          $ref: '#/components/responses/ServiceUnavailable'
   /api/v1/jsonld/{hash}:
     get:
       tags: [ JSON-LD Endpoints ]
@@ -685,6 +703,10 @@ components:
         **Required.** Standard HTTP Bearer token authentication. Include your project API key in the `Authorization` header as `Bearer YOUR_API_KEY`. Project API keys use the format `sk-...`.
 
   headers:
+    X-Request-Id:
+      description: HTTP request correlation ID. Include it when contacting support.
+      schema:
+        type: string
     RateLimit-Limit:
       description: Maximum requests in current window. The literal string `none` when no rate limit is configured for the organization.
       schema:
@@ -706,6 +728,14 @@ components:
       description: Payload for JSON-LD generation.
       additionalProperties: false
       required: [url]
+      allOf:
+        - not:
+            description: "`content_changed: true` and `html` are mutually exclusive."
+            required: [html, content_changed]
+            properties:
+              html: {}
+              content_changed:
+                const: true
       properties:
         url:
           type: string
@@ -719,6 +749,60 @@ components:
             Optional. Raw HTML content of the page. When provided, the crawler will use this HTML instead of fetching the page, allowing you to generate JSON-LD for pages that require JavaScript rendering or are behind authentication.
 
             **Limits:** Max 5 MB uncompressed; max 350 KB after server-side gzip compression (inline `data:` URIs and inline SVGs are stripped before the compressed check, so realistic page HTML rarely hits this limit).
+        content_changed:
+          type: boolean
+          description: |
+            Optional strict JSON Boolean. Missing or `false` preserves the existing cache-first behavior. Set to `true` only after the source page was published and must be fetched and regenerated again.
+
+            `true` bypasses the existing-record/cache fast path and cannot be combined with `html`. Duplicate change signals for the same normalized URL are coalesced. The organization-level delay determines whether the accepted refresh is queued immediately or scheduled once.
+
+    ContentChangeRefreshAccepted:
+      type: object
+      description: |
+        A confirmed content-change refresh operation. This body is returned only when the request contains `content_changed: true`.
+
+        `request_id` identifies the stable logical refresh claim used for first-wins deduplication. Deduplicated callers receive the first claim's value. It is distinct from the `X-Request-Id` header, which identifies the individual HTTP request.
+      additionalProperties: false
+      required:
+        - status
+        - deduplicated
+        - hash
+        - url
+        - jsonld_id
+        - request_id
+        - delay_seconds
+      properties:
+        status:
+          type: string
+          enum: [queued, scheduled, processing]
+          description: Current state of the accepted refresh claim.
+        deduplicated:
+          type: boolean
+          description: Whether this request was coalesced into an already active refresh claim.
+        hash:
+          type: string
+          pattern: '^[a-f0-9]{32}$'
+          description: MD5 hash of the normalized URL. Use it with `GET /api/v1/jsonld/{hash}`.
+        url:
+          type: string
+          format: uri
+          description: Normalized source URL without query parameters or fragment.
+        jsonld_id:
+          type: string
+          description: Identifier of the JSON-LD target being refreshed.
+        request_id:
+          type: string
+          description: Stable logical refresh-claim identifier; not the HTTP `X-Request-Id`.
+        scheduled_for:
+          type: string
+          format: date-time
+          description: First-wins target time. Present only for a delayed refresh.
+        delay_seconds:
+          type: integer
+          minimum: 0
+          maximum: 86400
+          multipleOf: 60
+          description: Organization delay captured when this refresh claim was created.
 
     JsonLdListItem:
       type: object
@@ -813,7 +897,7 @@ components:
 
     Problem:
       type: object
-      description: Standard error object in RFC 7807 style.
+      description: Standard error object in RFC 9457 style.
       required:
         - type
         - title
@@ -852,6 +936,7 @@ components:
         **Required.** JSON request body with the URL to generate JSON-LD for.
         The `Content-Type` header must be `application/json`.
         Optionally include `html` to provide page content directly (skip crawling).
+        Set `content_changed` to the strict Boolean `true` after a CMS publish event to request a fresh crawl and regeneration. It cannot be combined with `html`.
       required: true
       content:
         application/json:
@@ -867,42 +952,145 @@ components:
               value:
                 url: "https://example.com/blog/automatic-jsonld-with-enhancely"
                 html: "<html><head><title>My Page</title></head><body><h1>Content</h1></body></html>"
+            content-changed:
+              summary: Report a published page change
+              value:
+                url: "https://example.com/blog/automatic-jsonld-with-enhancely"
+                content_changed: true
 
   responses:
     CreatedJsonLd:
       description: |
         Record created and the crawler is now processing the requested resource. Poll the `GET /api/v1/jsonld/{hash}` endpoint to check when processing completes.
 
-        **Note:** the `status` field in this body is the fixed literal `processing` — it is *not* one of the record lifecycle statuses (`created`, `updating`, `ready`, ...) returned in 200 responses.
+        A standard request returns the legacy processing body. When `content_changed: true` creates the target, the response instead uses `ContentChangeRefreshAccepted` and includes `Location`.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/X-Request-Id'
+        RateLimit-Limit:
+          $ref: '#/components/headers/RateLimit-Limit'
+        RateLimit-Remaining:
+          $ref: '#/components/headers/RateLimit-Remaining'
+        RateLimit-Reset:
+          $ref: '#/components/headers/RateLimit-Reset'
+        Location:
+          description: Polling URL. Present for a content-change request that created the target.
+          schema:
+            type: string
       content:
         application/json:
           schema:
-            type: object
-            properties:
-              status:
-                type: string
-                enum: [processing]
-                description: Fixed literal `processing`. Not a record lifecycle status.
-              message:
-                type: string
-                description: Human-readable status message.
-              hash:
-                type: string
-                description: MD5 hash of the (possibly redirected) final URL.
-              url:
-                type: string
-                description: The final URL after redirect resolution. May differ from the submitted URL.
-          example:
-            status: "processing"
-            message: "Record created and the crawler is now processing the requested resource. Please try again later."
-            hash: "7c165c13f93d7ca168bcfbd73cf563e3"
-            url: "https://example.com/page"
+            oneOf:
+              - type: object
+                required: [status, message]
+                properties:
+                  status:
+                    type: string
+                    enum: [processing]
+                    description: Fixed literal `processing`. Not a record lifecycle status.
+                  message:
+                    type: string
+                    description: Human-readable status message.
+                  hash:
+                    type: string
+                    description: MD5 hash of the (possibly redirected) final URL.
+                  url:
+                    type: string
+                    description: The final URL after redirect resolution. May differ from the submitted URL.
+              - $ref: '#/components/schemas/ContentChangeRefreshAccepted'
+          examples:
+            standard-create:
+              summary: Standard first-time creation
+              value:
+                status: "processing"
+                message: "Record created and the crawler is now processing the requested resource. Please try again later."
+                hash: "7c165c13f93d7ca168bcfbd73cf563e3"
+                url: "https://example.com/page"
+            content-change-create:
+              summary: Content-change signal created the target
+              value:
+                status: "queued"
+                deduplicated: false
+                hash: "7c165c13f93d7ca168bcfbd73cf563e3"
+                url: "https://example.com/page"
+                jsonld_id: "refresh-4acaa0d3"
+                request_id: "08fef82b-b01d-476d-a4b3-7f061c14424d"
+                delay_seconds: 0
+
+    AcceptedOrContentChangeJsonLd:
+      description: |
+        Standard POST requests return an RFC 9457 Problem while the crawler is still processing. A request with `content_changed: true` returns `ContentChangeRefreshAccepted` after the refresh was durably queued, scheduled or coalesced.
+
+        Switch on the presence of `type`: Problem bodies contain numeric `status: 202`; content-change bodies contain the lifecycle state `queued`, `scheduled` or `processing`.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/X-Request-Id'
+        RateLimit-Limit:
+          $ref: '#/components/headers/RateLimit-Limit'
+        RateLimit-Remaining:
+          $ref: '#/components/headers/RateLimit-Remaining'
+        RateLimit-Reset:
+          $ref: '#/components/headers/RateLimit-Reset'
+        Location:
+          description: Polling URL. Present for accepted content-change refreshes.
+          schema:
+            type: string
+        Retry-After:
+          description: Remaining seconds until `scheduled_for`. Present only for delayed content-change refreshes.
+          schema:
+            type: integer
+            minimum: 0
+      content:
+        application/json:
+          schema:
+            oneOf:
+              - $ref: '#/components/schemas/Problem'
+              - $ref: '#/components/schemas/ContentChangeRefreshAccepted'
+          examples:
+            still-processing:
+              summary: Passive standard processing response
+              value:
+                type: "https://enhancely.ai/problems/still-processing"
+                title: "Still Processing"
+                status: 202
+                detail: "The crawler is still processing the requested resource. Please try again later."
+            refresh-scheduled:
+              summary: Delayed content-change refresh accepted
+              value:
+                status: "scheduled"
+                deduplicated: false
+                hash: "7c165c13f93d7ca168bcfbd73cf563e3"
+                url: "https://example.com/page"
+                jsonld_id: "f43ff420-44f8-46fd-a4dc-c18cb52a6018"
+                request_id: "08fef82b-b01d-476d-a4b3-7f061c14424d"
+                scheduled_for: "2026-07-17T15:00:00.000Z"
+                delay_seconds: 3600
+            refresh-deduplicated:
+              summary: Duplicate signal coalesced into the first refresh
+              value:
+                status: "scheduled"
+                deduplicated: true
+                hash: "7c165c13f93d7ca168bcfbd73cf563e3"
+                url: "https://example.com/page"
+                jsonld_id: "f43ff420-44f8-46fd-a4dc-c18cb52a6018"
+                request_id: "08fef82b-b01d-476d-a4b3-7f061c14424d"
+                scheduled_for: "2026-07-17T15:00:00.000Z"
+                delay_seconds: 3600
 
     AcceptedJsonLd:
       description: |
-        The crawler is still processing the requested resource. Returned by `POST /api/v1/jsonld` for existing records still being processed, and by `GET /api/v1/jsonld/{hash}` while polling.
+        The crawler is still processing the requested resource. Returned while polling `GET /api/v1/jsonld/{hash}`.
 
-        **Note:** the body is an RFC 9457 Problem object — its `status` field contains the **numeric** HTTP status code `202`, not a record lifecycle status string.
+        The body is an RFC 9457 Problem object. Its `status` field contains the numeric HTTP status code `202`, not a record lifecycle status string.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/X-Request-Id'
+        RateLimit-Limit:
+          $ref: '#/components/headers/RateLimit-Limit'
+        RateLimit-Remaining:
+          $ref: '#/components/headers/RateLimit-Remaining'
+        RateLimit-Reset:
+          $ref: '#/components/headers/RateLimit-Reset'
       content:
         application/json:
           schema:
@@ -1072,6 +1260,20 @@ components:
                 title: "Bad Request"
                 status: 400
                 detail: "URL rejected by denylist"
+            invalid-content-changed:
+              summary: "`content_changed` is not a JSON Boolean"
+              value:
+                type: "https://enhancely.ai/problems/bad-request"
+                title: "Bad Request"
+                status: 400
+                detail: "content_changed must be a boolean"
+            conflicting-content-source:
+              summary: Change signal combined with authoritative HTML
+              value:
+                type: "https://enhancely.ai/problems/bad-request"
+                title: "Bad Request"
+                status: 400
+                detail: "content_changed=true cannot be combined with html"
             invalid-filter:
               summary: Invalid query parameter on the list endpoint
               value:
@@ -1108,6 +1310,39 @@ components:
             title: "Precondition Failed"
             status: 412
             detail: "The precondition given in the request header fields evaluated to false"
+
+    Conflict:
+      description: The content-change target is readonly or ignored and cannot be regenerated.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/X-Request-Id'
+        RateLimit-Limit:
+          $ref: '#/components/headers/RateLimit-Limit'
+        RateLimit-Remaining:
+          $ref: '#/components/headers/RateLimit-Remaining'
+        RateLimit-Reset:
+          $ref: '#/components/headers/RateLimit-Reset'
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          examples:
+            readonly:
+              summary: Readonly target
+              value:
+                type: "https://enhancely.ai/problems/refresh_readonly"
+                title: "Conflict"
+                status: 409
+                detail: "JSON-LD record is readonly"
+                code: "refresh_readonly"
+            ignored:
+              summary: Ignored target
+              value:
+                type: "https://enhancely.ai/problems/refresh_ignored"
+                title: "Conflict"
+                status: 409
+                detail: "JSON-LD record is ignored"
+                code: "refresh_ignored"
 
     UnsupportedMediaType415:
       description: Content-Type not supported.
@@ -1208,3 +1443,31 @@ components:
             title: "Internal Server Error"
             status: 500
             detail: "An unexpected server error occurred"
+
+    ServiceUnavailable:
+      description: |
+        The content-change orchestrator could not confirm durable queue or schedule acceptance. No successful acceptance is reported; retry after the indicated delay.
+      headers:
+        X-Request-Id:
+          $ref: '#/components/headers/X-Request-Id'
+        RateLimit-Limit:
+          $ref: '#/components/headers/RateLimit-Limit'
+        RateLimit-Remaining:
+          $ref: '#/components/headers/RateLimit-Remaining'
+        RateLimit-Reset:
+          $ref: '#/components/headers/RateLimit-Reset'
+        Retry-After:
+          description: Retry delay in seconds.
+          schema:
+            type: integer
+            enum: [30]
+      content:
+        application/json:
+          schema:
+            $ref: '#/components/schemas/Problem'
+          example:
+            type: "https://enhancely.ai/problems/dispatch-failed"
+            title: "Service Unavailable"
+            status: 503
+            detail: "Content-change refresh is temporarily unavailable"
+            code: "dispatch-failed"

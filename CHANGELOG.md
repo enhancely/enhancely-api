@@ -1,5 +1,20 @@
 # Changelog
 
+## [1.5.0] – 2026-07-17
+
+### Added
+
+- **Explicit content-change signal** — `POST /api/v1/jsonld` accepts the optional strict Boolean `content_changed`. `true` requests a fresh crawl and JSON-LD regeneration after a CMS publish event; missing or `false` preserves the existing cache-first behavior.
+- **Organization-level delay and first-wins coalescing documented** — change signals can be queued immediately or scheduled with the configured organization delay. Repeated signals for the same normalized URL return the original claim with `deduplicated: true`; signals received during processing create at most one follow-up.
+- **`ContentChangeRefreshAccepted` schema** — documents `queued`/`scheduled`/`processing`, `deduplicated`, polling `hash`, `jsonld_id`, logical refresh `request_id`, optional `scheduled_for`, and `delay_seconds`.
+- **Content-change errors completed** — `409` covers readonly/ignored targets; an unconfirmed asynchronous dispatch returns `503` with `Retry-After: 30` and preserved rate-limit headers instead of a false acceptance.
+
+### Clarified
+
+- `201` and `202` have explicit `oneOf` bodies: legacy creation/processing responses remain unchanged, while requests containing `content_changed: true` return `ContentChangeRefreshAccepted`.
+- The body `request_id` is the stable logical refresh-claim identifier used for deduplication; it is distinct from the per-HTTP-request `X-Request-Id` support correlation header.
+- `content_changed: true` and `html` are mutually exclusive because supplied HTML is already authoritative.
+
 ## [1.4.3] – 2026-07-14
 
 ### Documentation (no API behavior changes)

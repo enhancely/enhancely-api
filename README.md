@@ -9,6 +9,8 @@ This repository provides:
 - CI workflows for linting, validation, and static documentation generation (ReDoc).
 - A static API reference in docs/index.html (for GitHub Pages).
 
+The public specification includes the CMS content-change signal (`content_changed: true`), optional organization-level delay, first-wins deduplication, and its asynchronous 201/202 response contracts.
+
 ## Getting Started
 
 **Clone the repository**
