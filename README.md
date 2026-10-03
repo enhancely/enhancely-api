@@ -1,5 +1,9 @@
 # Enhancely API Documentation
 
+> **DEPRECATED — This repository is a historical archive. The Enhancely API is maintained in [enhancely-core](https://github.com/enhancely/enhancely-core). Use the [current API documentation](https://api.enhancely.ai/docs) for the supported API and behavior.**
+>
+> **The old documentation site now redirects to the current API documentation. CI and publishing jobs are disabled. The guides and OpenAPI files below are retained for reference and may describe legacy behavior.**
+
 Efficient static JSON‑LD generation from page URLs with [Enhancely](https://enhancely.ai).
 
 ## Overview
